@@ -1,0 +1,30 @@
+manifestVersion: 1
+name: robonix-go2-mujoco
+catalog:
+  name: robonix.robot.unitree.go2_mujoco
+  version: 0.1.0
+  description: Native torque-driven Go2 MuJoCo simulation with Robonix chassis and RGB-D/lidar/IMU capabilities.
+  license: Apache-2.0 AND BSD-3-Clause
+  maintainers:
+    - Origamii520 <zxq13204030517@163.com>
+  tags: [robot, unitree, go2, quadruped, mujoco, simulation, rgbd, lidar]
+system:
+  atlas:
+    listen: 127.0.0.1:54151
+    log: info
+  executor:
+    listen: 127.0.0.1:54161
+    log: info
+  soma:
+    listen: 127.0.0.1:54191
+    robot_yaml: ./soma.yaml
+    log: info
+primitive:
+  - name: go2_sim_chassis
+    path: ./primitives/go2_sim_chassis
+  - name: go2_sim_lidar
+    path: ./primitives/go2_sim_lidar
+  - name: go2_sim_camera
+    path: ./primitives/go2_sim_camera
+  - name: go2_sim_imu
+    path: ./primitives/go2_sim_imu

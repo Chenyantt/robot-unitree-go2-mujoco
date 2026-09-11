@@ -1,0 +1,21 @@
+Go2 Native MuJoCo Robonix integration
+Copyright 2026 Origamii520
+
+Original integration code is licensed under Apache-2.0.
+
+The downloaded Unitree Go2 model and meshes come from
+unitreerobotics/unitree_mujoco, commit
+1eb6642e3f3fdfb7fb13a9794fd6a2dd93ea0e7d, BSD-3-Clause.
+The original license is preserved as .runtime/assets/model/LICENSE.
+
+The Go2 robot_lab policy, configuration, and observation/action conventions
+are from Ziqi Fan's fan-ziqi/rl_sar, commit
+376d42c9b128f963ab08579762d5a216a976ce39, Apache-2.0.
+The original license is preserved as .runtime/assets/policy/LICENSE.
+go2_sim/controller.py implements those observation/action conventions for
+named MuJoCo joints and adds a separately documented yaw feedback adapter.
+No policy weights or vendor model source bytes are changed.
+
+Robonix and its Python API are separately installed dependencies, not vendored
+here. Consult their upstream licenses. This package is a community integration,
+not a claim of Unitree endorsement or proprietary Sport-controller equivalence.

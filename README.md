@@ -69,7 +69,7 @@ runtime/codegen versions compatible. No system/ROS dependency installation is
 performed implicitly by this repository's build or startup scripts.
 
 ```bash
-git clone https://github.com/Origamii520/robot-unitree-go2-mujoco.git
+git clone https://github.com/syswonder/robot-unitree-go2-mujoco.git
 cd robot-unitree-go2-mujoco
 python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements-sim.txt

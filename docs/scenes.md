@@ -1,6 +1,6 @@
 # Scenes
 
-`assets/environments/manifest.json` contains exactly four mesh environments.
+`assets/environments/manifest.json` contains five mesh environments.
 The default is `scenesmith_house_185`. Positions below use MuJoCo XY in meters;
 all spawns stand on a floor at Z=0. House 186 faces -X (yaw pi radians), toward
 the bedroom interior; the other scenes face +X (yaw 0). Robot base height is
@@ -12,15 +12,18 @@ applied by the runtime.
 | `scenesmith_house_186` | House/scene_186: bedroom and bathroom | 4.48, 2.78 | 0.6225 m |
 | `go2_rl_stairs` | go2_rl_gym stairs.xml, all 169 geometries | -0.5, 0 | 1.65 m |
 | `go2_rl_track` | go2_rl_gym race_track.xml, all 236 geometries | -0.5, 0 | 0.98 m |
+| `scenesmith_multilevel_house` | House 191 ground floor, House 188 upper floor, calibrated straight stair | -2.95, -1.70 | 0.50 m |
 
-The houses are distinct, uncombined exports from the dataset's **House** subset.
-Neither uses House/scene_187, the source of both the older house_187 and the
-synthetically rearranged scenesmith_multilevel_house. The imported houses are
-single-floor two-room layouts, not multi-story houses.
+House 185 and House 186 remain distinct, uncombined single-floor exports. The
+multilevel package is a separate composition imported from the adjacent
+MuJoCo-GS-Web project: House 191 is the ground floor, House 188 is the upper
+floor, and a 25-step flight provides the physical connection. Its source member
+hashes and generation parameters are retained in that environment directory.
 
 ## Import
 
-Run from the package root with Python 3.10+ and curl. The downloads total about
+The following importer rebuilds the original two houses and two courses. Run
+from the package root with Python 3.10+ and curl. The downloads total about
 2.02 GB; the resulting runtime assets total about 213 MB. Allow 4 GB free space.
 
 ```sh
@@ -90,13 +93,20 @@ uv pip install --python /tmp/go2-scene-validation/bin/python mujoco==3.3.7
 /tmp/go2-scene-validation/bin/python scripts/download-scenes-validate.py --cache /tmp/go2-scene-sources
 ```
 
-The check loads all four XMLs, verifies manifest IDs and indexed files, asserts
+The check loads the original four XMLs, verifies their IDs and indexed files, asserts
 static colliders use group 3, probes 35 floor support points across the footprint,
 and checks a 0.84 x 0.44 x 0.78 m volume above the floor has zero contacts.
 `--cache` additionally compares every course visual and collider against upstream
 XML geometry and checks that texture/material definitions remain unchanged.
-All four imports passed these native MuJoCo 3.3.7 checks and loaded successfully
+Those four imports passed these native MuJoCo 3.3.7 checks and loaded successfully
 in the package's mujoco-js WASM engine (MuJoCo 3.3.8).
+
+The multilevel package is checked with
+`sim/tests/native_smoke.py --environment scenesmith_multilevel_house --policy`;
+its scene-level stair annotation is `multifloor.yaml`, and its per-floor Mapping
+artifacts are under `assets/maps/`. The complete sensor-built artifacts are
+`scenesmith_multilevel_floor_1_v2` (439 RTAB-Map nodes, 288 x 147 occupancy)
+and `scenesmith_multilevel_floor_2_v2` (787 nodes, 241 x 153 occupancy).
 
 ## Licenses
 

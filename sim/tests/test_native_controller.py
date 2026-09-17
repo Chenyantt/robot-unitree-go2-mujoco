@@ -80,14 +80,20 @@ class NativeControllerTests(unittest.TestCase):
             build_moe_rough_observation([math.nan, 0, 0], [1, 0, 0, 0],
                                         [0]*3, DEFAULT_JOINT_POS, [0]*12, [0]*12)
 
-    def test_js_gait_home_diagonal_and_continuous_commands(self):
-        """Verify the JS home and diagonal symmetry and preserve fractional Twist."""
+    def test_scripted_gait_home_diagonal_turn_and_continuous_commands(self):
+        """Verify gait symmetry, two-axis yaw steps and fractional Twist."""
         np.testing.assert_array_equal(compute_go2_targets(np.zeros(3), 1), SCRIPTED_HOME)
         full = compute_go2_targets(np.array([1., 0, 0]), .7).reshape(4, 3)
         np.testing.assert_array_equal(full[0], full[3])
         np.testing.assert_array_equal(full[1], full[2])
         half = compute_go2_targets(np.array([.5, 0, 0]), .7).reshape(4, 3)
         self.assertGreater(np.max(abs(full-half)), .01)
+        turn = compute_go2_targets(np.array([0., 0, .4]), .7).reshape(4, 3)
+        self.assertGreater(abs(turn[0, 0]), .01)
+        self.assertGreater(abs(turn[0, 1]), .01)
+        np.testing.assert_allclose(turn[0, 0], -turn[3, 0])
+        np.testing.assert_allclose(turn[1, 0], -turn[2, 0])
+        self.assertFalse(np.allclose(turn[:, 1], .9))
         self.assertTrue(self.controller.command({"type": "cmd_vel", "linearX": .123,
                                                  "linearY": -.087, "angularZ": .231}))
         np.testing.assert_array_equal(self.controller.twist, [.123, -.087, .231])
@@ -303,6 +309,38 @@ class NativeControllerTests(unittest.TestCase):
                     controller.step()
                     np.testing.assert_array_equal(controller.data.qpos, before)
                     np.testing.assert_array_equal(controller.data.qvel, velocity)
+
+    def test_scripted_full_turn_stays_upright_and_near_its_start(self):
+        """A sustained in-place turn must not accumulate unsafe translation."""
+        for sign in (-1, 1):
+            with self.subTest(sign=sign):
+                controller = Go2Controller(self.model, mujoco.MjData(self.model))
+                controller.clock = lambda: controller.data.time
+                advance(controller, 1)
+                start = controller.data.qpos[:2].copy()
+                minimum_z, minimum_up = advance(controller, 4, [0, 0, sign*.4])
+                w, x, y, z = controller.data.qpos[3:7]
+                yaw = math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))
+                self.assertGreater(sign*yaw, 1.2)
+                later_z, later_up = advance(controller, 12, [0, 0, sign*.4])
+                minimum_z = min(minimum_z, later_z)
+                minimum_up = min(minimum_up, later_up)
+                displacement = np.linalg.norm(controller.data.qpos[:2]-start)
+                self.assertGreater(minimum_z, .23)
+                self.assertGreater(minimum_up, .9)
+                self.assertLess(displacement, .30)
+                advance(controller, 2, [0, 0, 0])
+                self.assertLess(np.linalg.norm(controller.data.qvel[:3]), .03)
+
+    def test_scripted_motion_is_suppressed_after_large_tilt(self):
+        """The fallback gait prioritizes recovery when the body is not upright."""
+        controller = self.controller
+        controller.data.qpos[3:7] = [math.cos(math.pi/6), math.sin(math.pi/6), 0, 0]
+        mujoco.mj_forward(controller.model, controller.data)
+        controller.command({"type": "cmd_vel", "linearX": .4, "angularZ": .4})
+        controller.step()
+        np.testing.assert_array_equal(controller.targets, SCRIPTED_HOME)
+        np.testing.assert_array_equal(controller.velocity_integral, 0)
 
     def test_sensor_frames_optical_depth_and_missing_ids(self):
         """A front-parallel wall has constant optical depth, including corner pixels."""

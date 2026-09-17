@@ -8,6 +8,12 @@ go2_rl_gym policy: assets/robots/go2/policy/moe_rough/UPSTREAM.md.
 go2_rl_gym courses: each course's LICENSE.upstream and provenance.json.
 SceneSmith example dataset: assets/environments/LICENSE.scenesmith and
 each house's NOTICE.md and provenance.json.
+The multilevel House 191/188 composition retains its SceneSmith attribution and
+generation report under assets/environments/scenesmith_multilevel_house.
+
+The deployment-owned floor_transition skill uses MulanPSL-2.0 packaging
+scaffolding derived from syswonder/skill-explore-rbnx; its runtime controller,
+contracts, annotations and tests are specific to this repository.
 
 Robonix services are separate upstream packages fetched by rbnx build;
 their licenses remain authoritative within their own source repositories.

@@ -37,6 +37,19 @@
       "filesPath": "./assets/environments/go2_rl_track/index.json",
       "spawnPath": "./assets/environments/go2_rl_track/spawn.json",
       "camera": null
+    },
+    {
+      "id": "scenesmith_multilevel_house",
+      "label": "SceneSmith Two-Story House - Mesh",
+      "visualMode": "mesh",
+      "xmlPath": "./assets/environments/scenesmith_multilevel_house/scene.xml",
+      "filesPath": "./assets/environments/scenesmith_multilevel_house/index.json",
+      "spawnPath": "./assets/environments/scenesmith_multilevel_house/spawn.json",
+      "camera": {
+        "position": [-5.3, 1.0, 1.7],
+        "target": [0.0, 0.4, 1.7]
+      },
+      "multiFloorProfile": "./assets/environments/scenesmith_multilevel_house/multifloor.yaml"
     }
   ]
 }

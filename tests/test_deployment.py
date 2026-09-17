@@ -11,6 +11,7 @@ import sys
 from types import SimpleNamespace as Message
 import unittest
 from unittest.mock import Mock, patch
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -55,6 +56,52 @@ def exploration_run(state="RUNNING", canceled_state="CANCELED"):
 
 
 class AcceptanceValidationTests(unittest.TestCase):
+    def test_multilevel_upper_landing_has_gallery_entrance(self):
+        """Keep a Go2-width opening between the stair landing and upper gallery."""
+        root = ET.parse(
+            ROOT / "assets/environments/scenesmith_multilevel_house/scene.xml"
+        ).getroot()
+        geoms = {geom.get("name"): geom for geom in root.findall(".//geom")}
+        guard = geoms["multilevel_gallery_guard"]
+        landing = geoms["multilevel_stair_upper_landing"]
+        guard_x = float(guard.get("pos").split()[0])
+        guard_half_x = float(guard.get("size").split()[0])
+        landing_x = float(landing.get("pos").split()[0])
+        landing_half_x = float(landing.get("size").split()[0])
+        opening = (landing_x - landing_half_x) - (guard_x + guard_half_x)
+        self.assertGreaterEqual(opening, 0.45)
+
+    def test_multilevel_gallery_open_edge_is_guarded(self):
+        """Prevent a coverage or navigation turn from walking off the west edge."""
+        root = ET.parse(
+            ROOT / "assets/environments/scenesmith_multilevel_house/scene.xml"
+        ).getroot()
+        geoms = {geom.get("name"): geom for geom in root.findall(".//geom")}
+        gallery = geoms["multilevel_upper_gallery"]
+        guard = geoms["multilevel_gallery_west_guard"]
+        gallery_pos = [float(value) for value in gallery.get("pos").split()]
+        gallery_size = [float(value) for value in gallery.get("size").split()]
+        guard_pos = [float(value) for value in guard.get("pos").split()]
+        guard_size = [float(value) for value in guard.get("size").split()]
+        self.assertAlmostEqual(guard_pos[0], gallery_pos[0] - gallery_size[0] - guard_size[0])
+        self.assertAlmostEqual(guard_pos[1], gallery_pos[1])
+        self.assertGreaterEqual(guard_size[1], gallery_size[1])
+        self.assertGreaterEqual(guard_pos[2] - guard_size[2], 3.0)
+
+    def test_multilevel_upper_bedroom_has_go2_passage(self):
+        """Keep a traversable aisle between the upper bedroom bed and bench."""
+        root = ET.parse(
+            ROOT / "assets/environments/scenesmith_multilevel_house/scene.xml"
+        ).getroot()
+        bodies = {body.get("name"): body for body in root.findall(".//body")}
+        bed = bodies["floor_2_bedroom_bed_0"]
+        bench = bodies["floor_2_bedroom_bench_0"]
+        bed_y = float(bed.get("pos").split()[1])
+        bench_y = float(bench.get("pos").split()[1])
+        bed_half_y = float(bed.find("./geom[@name='floor_2_bedroom_bed_0_static_collision']").get("size").split()[1])
+        bench_half_y = float(bench.find("./geom[@name='floor_2_bedroom_bench_0_static_collision']").get("size").split()[1])
+        self.assertGreaterEqual((bench_y - bench_half_y) - (bed_y + bed_half_y), 0.8)
+
     def test_explore_worker_requires_local_build_without_cache_fallback(self):
         """Activation and MCP calls require local explore stubs even if an old cache exists."""
         expected = ROOT / "skills/explore/rbnx-build/codegen/proto_gen/atlas_pb2.py"

@@ -22,6 +22,8 @@ SCRIPTED_KP = np.tile([45.0, 55.0, 60.0], 4)
 SCRIPTED_KD = np.tile([1.5, 2.0, 2.0], 4)
 COMMAND_LIMITS = np.array([0.6, 0.35, 0.6])
 SCRIPTED_COMMAND_LIMITS = np.array([0.4, 0.15, 0.5])
+SCRIPTED_UPRIGHT_RECOVERY_COS = 0.72
+SCRIPTED_UPRIGHT_FULL_SPEED_COS = 0.90
 COMMAND_WATCHDOG_S = 0.35
 CONTROL_DT = 0.02
 LINK_LENGTH = 0.213
@@ -29,19 +31,25 @@ HOME_FOOT_Z = -2 * LINK_LENGTH * math.cos(0.9)
 
 
 def compute_go2_targets(command: np.ndarray, phase: float) -> np.ndarray:
-    """Port the JS diagonal gait; command is normalized forward/lateral/yaw."""
+    """Build diagonal-trot joint targets for a body-frame velocity command."""
     magnitude = min(1.0, float(np.linalg.norm(command)))
     if magnitude < 1e-6:
         return SCRIPTED_HOME.copy()
     targets = np.empty(12)
-    for index, (side, offset) in enumerate(((1, 0), (-1, .5), (1, .5), (-1, 0))):
+    for index, (front, side, offset) in enumerate((
+            (1, 1, 0), (1, -1, .5), (-1, 1, .5), (-1, -1, 0))):
         cycle = (phase / math.tau + offset) % 1.0
         stance = cycle < .56
         progress = cycle / .56 if stance else (cycle - .56) / .44
         travel = .5 - progress if stance else -.5 + progress
         lift = 0.0 if stance else math.sin(math.pi * progress)
+        # A yaw step is tangential to each hip: left/right legs need opposite
+        # fore-aft travel and front/rear legs need opposite lateral travel.
+        # The previous gait implemented only the first component, so an
+        # in-place turn translated the body and could walk it into nearby
+        # geometry.  The coefficient ratio follows the Go2 hip offsets.
         x = .13 * np.clip(command[0] - side * command[2] * .65, -1, 1) * travel
-        y = .075 * command[1] * travel
+        y = (.075 * command[1] + .115 * front * command[2]) * travel
         z = HOME_FOOT_Z + .045 * lift * magnitude
         sagittal_z = -math.hypot(y, z)
         cosine = np.clip((x*x + sagittal_z*sagittal_z - 2*LINK_LENGTH**2)
@@ -306,6 +314,15 @@ class Go2Controller:
             kp, kd = np.full(12, 20.0), np.full(12, .5)
             feedforward = np.zeros(12)
         else:
+            # Reduce commanded motion before a large roll/pitch error becomes
+            # unrecoverable. This is deliberately inactive for the rough-
+            # terrain policy, which owns its own attitude recovery on stairs.
+            upright = float(self.data.xmat[self.base, 8])
+            upright_scale = np.clip(
+                (upright-SCRIPTED_UPRIGHT_RECOVERY_COS)
+                / (SCRIPTED_UPRIGHT_FULL_SPEED_COS-SCRIPTED_UPRIGHT_RECOVERY_COS),
+                0, 1)
+            command *= upright_scale
             active = float(np.linalg.norm(command) > 1e-6)
             rate = 5.0 if active else 7.0
             self.gait_blend += (active - self.gait_blend) * min(1.0, rate*self.model.opt.timestep)

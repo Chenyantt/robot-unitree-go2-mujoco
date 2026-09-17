@@ -11,8 +11,10 @@ for package_dir in \
   primitives/lidar \
   primitives/imu \
   primitives/front_camera \
-  skills/explore; do
+  skills/explore \
+  skills/floor_transition; do
   rbnx validate "$package_dir"
 done
+bash scripts/install-prebuilt-maps.sh
 rbnx build -f robonix_manifest.yaml --no-update-check
 echo "Build completed. Start the simulator with: bash sim/start.sh"

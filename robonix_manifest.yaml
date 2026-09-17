@@ -107,3 +107,9 @@ skill:
       approach_distance_m: 0.8
       failed_goal_radius_m: 0.6
       failed_goal_ttl_s: 60
+  - name: floor_transition
+    path: ./skills/floor_transition
+    config:
+      profile_file: /scene_profile/multifloor.yaml
+      startup_floor: 1
+      bridge_url: http://127.0.0.1:8766

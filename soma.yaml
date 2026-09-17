@@ -35,6 +35,11 @@ robot:
         - {path: robonix/skill/explore/explore, description: "Explore the live occupancy map; request 0.18 m/s and a bounded timeout."}
         - {path: robonix/skill/explore/explore/status, description: "Check exploration progress by run_id."}
         - {path: robonix/skill/explore/explore/cancel, description: "Cancel exploration before starting another motion task."}
+    - provider_id: floor_transition
+      capabilities:
+        - {path: robonix/skill/floor_transition/execute, description: "Move this fixed two-story MuJoCo deployment up, down, or to floor 1/2 and switch Mapping to the destination floor artifact."}
+        - {path: robonix/skill/floor_transition/status, description: "Read transition phase, confirmed physical floor, and active map identity."}
+        - {path: robonix/skill/floor_transition/cancel, description: "Cancel the active floor transition and command zero stair velocity."}
   components:
     - id: base
       type: mobile_base
@@ -80,8 +85,10 @@ description:
     - "Build maps and localize with LiDAR, odometry, and front RGB-D."
     - "Explore at 0.18 m/s using the live occupancy map and navigation service."
     - "Find observed objects with Scene list_objects, request goal_near, then navigate to the returned pose."
+    - "In scenesmith_multilevel_house, traverse the calibrated main stair and switch between floor 1 and floor 2 maps."
   cannot_do:
     - "Manipulate objects or produce or consume audio."
     - "Navigate to an unobserved object by assuming a simulator object position."
     - "Run exploration and another motion task concurrently."
     - "Treat SPZ visuals as collision geometry or run SPZ with the native backend."
+    - "Discover unknown stairs or use floor transition outside the calibrated scenesmith_multilevel_house profile."

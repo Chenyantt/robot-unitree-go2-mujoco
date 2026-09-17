@@ -21,6 +21,7 @@ import time
 
 
 NAV = "robonix/service/navigation/navigate"
+CHASSIS = "robonix/primitive/chassis/move"
 EXPLORE = "robonix/skill/explore/explore"
 SCENE = "robonix/system/scene/"
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELED", "TIMEOUT"}
@@ -143,6 +144,21 @@ def rpc_worker(request):
         return {p.id: p.state.name for p in ATLAS.query()}
     providers = ATLAS.query(id=request["provider"])
     require(len(providers) == 1, f"{request['provider']} not uniquely registered")
+    if request["operation"] == "chassis":
+        import grpc
+        import chassis_pb2
+        import robonix_contracts_pb2_grpc
+        cap = ATLAS.find_unique_capability(
+            provider_id=request["provider"], contract_id=request["contract"], transport="grpc")
+        command = chassis_pb2.MoveCommand(**request["arguments"])
+        with ATLAS.connect_capability(
+                consumer_id="go2_acceptance", provider_id=cap.provider_id,
+                contract_id=cap.contract_id, transport="grpc") as channel:
+            with grpc.insecure_channel(channel.endpoint, options=[("grpc.enable_http_proxy", 0)]) as wire:
+                response = robonix_contracts_pb2_grpc.RobonixPrimitiveChassisMoveStub(
+                    wire).ExecuteMoveCommand(
+                        chassis_pb2.ExecuteMoveCommand_Request(command=command), timeout=360)
+        return json.loads(response.status.data)
     if providers[0].kind.name == "SKILL" or request["operation"] == "activate":
         def call_driver(cap):
             """Use package-generated Driver serialization and stub routing with a 60-second deadline."""
@@ -198,6 +214,8 @@ def parser():
     """Expose independent checks, parent-supplied endpoints and explicit measurement bounds."""
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--motion", action="store_true", help="drive forward without resetting the body")
+    result.add_argument("--relative", type=float, metavar="METRES",
+                        help="verify measured forward/backward and +/-30 degree chassis moves")
     result.add_argument("--require-map", action="store_true", help="require occupancy and fused cloud")
     result.add_argument("--navigate", nargs=2, type=float, metavar=("X", "Y"), help="map-frame goal; also test cancellation on the return leg")
     result.add_argument("--yaw", type=float, default=0.0)
@@ -282,16 +300,16 @@ def runtime(args, report):
             if key == "odom" and self.monitoring:
                 try:
                     pose = msg.pose.pose
-                    _, tilt = quaternion(pose.orientation)
+                    yaw, tilt = quaternion(pose.orientation)
                     point = np.array([pose.position.x, pose.position.y, pose.position.z])
                     require(np.isfinite(point).all() and point[2] >= args.min_height, "body height invalid/not upright")
                     require(tilt <= args.max_tilt, f"body tilted {tilt:.3f}rad")
                     if self.samples:
-                        at, old, _ = self.samples[-1]
+                        at, old, _, _ = self.samples[-1]
                         dt = stamp(msg) - at
                         require(dt >= 0 and np.linalg.norm(point-old) <= 2 * dt + 0.05,
                                 "body pose jumped; reset/teleport or invalid odometry")
-                    self.samples.append((stamp(msg), point, tilt))
+                    self.samples.append((stamp(msg), point, tilt, yaw))
                 except AssertionError as exc:
                     self.violation = str(exc)
 
@@ -316,7 +334,8 @@ def runtime(args, report):
         def rpc(self, provider="", contract="", arguments=None, operation="call", safety=True):
             """Bound discovery and MCP execution in a child while continuing ROS monitoring."""
             request = dict(provider=provider, contract=contract, arguments=arguments or {}, operation=operation)
-            timeout = 90 if operation == "activate" or provider == "explore" else 18
+            timeout = 360 if operation == "chassis" else (
+                90 if operation == "activate" or provider == "explore" else 18)
             future = self.pool.submit(subprocess.run, [sys.executable, __file__, "--rpc-worker"],
                                       input=json.dumps(request), text=True, capture_output=True, timeout=timeout)
             self.wait(future.done, timeout + 2, f"Robonix {contract or operation}", safety)
@@ -349,14 +368,19 @@ def runtime(args, report):
             self.wait(lambda: len(self.samples) >= 2, 5, "fresh upright odometry")
             return self.pose(frame)
 
-        def evidence(self):
-            """Require translation across fresh odometry samples, not status or TF changes alone."""
+        def evidence(self, allow_rotation=False):
+            """Require measured translation, or measured rotation when cancellation starts by turning."""
             require(self.violation is None, self.violation)
             require(len(self.samples) >= 3, "insufficient live body samples")
             points = np.array([sample[1][:2] for sample in self.samples])
             displacement = float(np.linalg.norm(points - points[0], axis=1).max())
-            require(displacement >= args.min_motion, f"body moved only {displacement:.4f}m")
+            headings = np.unwrap(np.array([sample[3] for sample in self.samples]))
+            heading_change = float(np.abs(headings - headings[0]).max())
+            require(displacement >= args.min_motion or (
+                allow_rotation and heading_change >= math.radians(8)),
+                f"body moved only {displacement:.4f}m / {math.degrees(heading_change):.2f}deg")
             return {"max_displacement_m": displacement, "samples": len(points),
+                    "max_heading_change_deg": math.degrees(heading_change),
                     "trace_frame": "odom", "start_position_xy": points[0].tolist(),
                     "end_position_xy": points[-1].tolist(),
                     "bounds_xy": [points.min(axis=0).tolist(), points.max(axis=0).tolist()],
@@ -372,9 +396,11 @@ def runtime(args, report):
             """Require actual stopped body displacement over a fresh observation interval."""
             self.pause(1)
             start = len(self.samples)
-            self.pause(1)
+            self.wait(
+                lambda: len(self.samples) >= start + 3 and
+                self.samples[-1][0] - self.samples[start][0] >= 0.4,
+                12, "three fresh stopped odometry samples")
             samples = self.samples[start:]
-            require(len(samples) >= 3, "no fresh body samples after stop/cancel")
             points = np.array([sample[1][:2] for sample in samples])
             require(float(np.linalg.norm(points - points[0], axis=1).max()) < 0.05,
                     "body continues moving after stop/cancel")
@@ -490,6 +516,41 @@ def runtime(args, report):
             if before_map is not None:
                 report["checks"]["motion"]["map_after"] = check_map(
                     node, args, before_map, node.samples[0][0])
+        if args.relative:
+            start = node.begin_motion("odom")
+            forward = node.rpc("go2_chassis", CHASSIS, {"forward_m": args.relative},
+                               operation="chassis")
+            node.settled()
+            reached = node.pose("odom")
+            delta = reached[:2] - start[:2]
+            progress = float(delta @ np.array([math.cos(start[2]), math.sin(start[2])]))
+            require(abs(progress - args.relative) <= 0.12,
+                    f"relative forward error {progress-args.relative:.3f}m")
+            backward = node.rpc("go2_chassis", CHASSIS, {"forward_m": -args.relative},
+                                operation="chassis")
+            node.settled()
+            returned = node.pose("odom")
+            return_error = float(np.linalg.norm(returned[:2] - start[:2]))
+            require(return_error <= 0.15, f"relative return error {return_error:.3f}m")
+            left = node.rpc("go2_chassis", CHASSIS, {"rotate_deg": 30}, operation="chassis")
+            node.settled()
+            left_pose = node.pose("odom")
+            left_turn = math.atan2(math.sin(left_pose[2]-returned[2]),
+                                   math.cos(left_pose[2]-returned[2]))
+            require(abs(left_turn-math.radians(30)) <= math.radians(7),
+                    f"relative left-turn error {math.degrees(left_turn)-30:.1f}deg")
+            right = node.rpc("go2_chassis", CHASSIS, {"rotate_deg": -30}, operation="chassis")
+            node.settled()
+            final = node.pose("odom")
+            heading_error = abs(math.atan2(math.sin(final[2]-returned[2]),
+                                           math.cos(final[2]-returned[2])))
+            require(heading_error <= math.radians(8),
+                    f"relative heading return error {math.degrees(heading_error):.1f}deg")
+            report["checks"]["relative"] = {
+                "forward": forward, "backward": backward, "left": left, "right": right,
+                "measured_forward_m": progress, "return_error_m": return_error,
+                "measured_left_deg": math.degrees(left_turn),
+                "heading_return_error_deg": math.degrees(heading_error), **node.evidence()}
         if args.navigate:
             before_map = check_map(node, args)
             start = node.begin_motion()
@@ -504,7 +565,10 @@ def runtime(args, report):
                 node, args, before_map, node.samples[0][0])
             node.begin_motion()
             handle, result = node.send_goal(start)
-            node.wait(lambda: len(node.samples) >= 3 and np.linalg.norm(node.samples[-1][1][:2] - node.samples[0][1][:2]) >= args.min_motion,
+            node.wait(lambda: len(node.samples) >= 3 and (
+                np.linalg.norm(node.samples[-1][1][:2] - node.samples[0][1][:2]) >= args.min_motion or
+                abs(math.atan2(math.sin(node.samples[-1][3] - node.samples[0][3]),
+                               math.cos(node.samples[-1][3] - node.samples[0][3]))) >= math.radians(8)),
                       min(30, args.navigation_timeout), "movement before cancellation")
             require(not result.done(), "return goal completed before cancellation could be tested")
             canceled = handle.cancel_goal_async()
@@ -514,7 +578,8 @@ def runtime(args, report):
             node.wait(result.done, 10, "Nav2 canceled terminal status")
             require(result.result().status == GoalStatus.STATUS_CANCELED, "Nav2 did not terminate CANCELED")
             node.settled()
-            report["checks"]["cancellation"] = dict(state="CANCELED", **node.evidence())
+            report["checks"]["cancellation"] = dict(
+                state="CANCELED", **node.evidence(allow_rotation=True))
         if args.explore:
             activation = node.rpc("explore", operation="activate")
             before = check_map(node, args)
@@ -767,6 +832,7 @@ def main():
                 valid = key == "yaw" or (value >= 0 if key == "map_epoch_start" else value > 0)
                 require(math.isfinite(value) and valid, f"invalid --{key.replace('_', '-')}")
         require(not args.navigate or all(math.isfinite(v) for v in args.navigate), "nonfinite navigation target")
+        require(args.relative is None or args.relative > 0, "--relative must be positive")
         require(not args.explore or args.explore_duration < args.explore_timeout,
                 "--explore-duration must be less than --explore-timeout")
         os.environ["ROBONIX_ATLAS"] = args.atlas
@@ -790,7 +856,8 @@ def main():
             report = json.loads(completed.stdout)
             require(completed.returncode == 0 and report.get("ok") is True, report.get("error", "container acceptance failed"))
         else:
-            for name, enabled in (("motion", args.motion), ("navigation", args.navigate),
+            for name, enabled in (("motion", args.motion), ("relative", args.relative),
+                                  ("navigation", args.navigate),
                                   ("cancellation", args.navigate), ("exploration", args.explore),
                                   ("semantic", args.semantic), ("stack", args.require_stack or args.semantic or args.explore),
                                   ("map", args.require_map or args.navigate or args.semantic or args.explore)):

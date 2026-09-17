@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import loadMujoco from 'mujoco-js';
-import { Go2Controller, GO2_ACTUATORS } from '../assets/robots/go2/controller.js';
+import { computeGo2Targets, Go2Controller, GO2_ACTUATORS } from '../assets/robots/go2/controller.js';
 import { PolicyController } from '../src/policy/PolicyController.js';
 import { generatePinholeDirections, rayRangeToOpticalDepth, RobotSensorSuite } from '../src/utils/RobotSensorSuite.js';
 import { NativeBridgeClient } from '../src/ControlPanel.js';
@@ -48,8 +48,30 @@ test('Go2 accepts continuous Twist and clears it on disconnect', () => {
   assert.deepEqual(controller.twist, { linearX: 0, linearY: 0, angularZ: 0 });
 });
 
-/** Fresh publications extend the same wall-time watchdog for the policy and scripted command source. */
-test('policy command expires after 350 ms without a fresh Twist', async () => {
+/** A pure yaw target uses tangential foot travel instead of translating the base. */
+test('scripted yaw targets include front-rear lateral travel', () => {
+  const targets = computeGo2Targets({ forward: 0, lateral: 0, turn: 0.24 }, Math.PI * 0.2);
+  assert.ok(['FL', 'FR', 'RL', 'RR'].every((leg) => Math.abs(targets[`${leg}_hip`]) > 1e-4));
+});
+
+/** Policy commands compensate measured velocity while preserving a hard zero command. */
+test('Go2 policy velocity tracking boosts low commands and clears compensation on stop', () => {
+  const controller = new Go2Controller();
+  controller.baseBody = 0;
+  const model = { opt: { timestep: 0.02 } };
+  const data = { xmat: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), qvel: new Float64Array(6) };
+  const forward = controller.trackedPolicyCommand({ linearX: 0.18, linearY: 0, angularZ: 0 }, model, data);
+  assert.ok(forward.linearX > 0.36 && forward.linearX < 0.38);
+  const turn = controller.trackedPolicyCommand({ linearX: 0, linearY: 0, angularZ: -0.3 }, model, data);
+  assert.ok(turn.angularZ < -0.68 && turn.angularZ > -0.72);
+  assert.deepEqual(controller.trackedPolicyCommand(
+    { linearX: 0, linearY: 0, angularZ: 0 }, model, data),
+  { linearX: 0, linearY: 0, angularZ: 0 });
+  assert.ok(controller.policyVelocityIntegral.every((value) => value === 0));
+});
+
+/** The Web watchdog spans slow rendered frames while disconnect still stops immediately. */
+test('policy command expires after two seconds without a fresh Twist', async () => {
   let time = 0;
   const controller = new Go2Controller(() => time);
   controller.initialized = true;
@@ -63,7 +85,7 @@ test('policy command expires after 350 ms without a fresh Twist', async () => {
   time = 0.6;
   await controller.step({}, {}, {}, {});
   assert.equal(commands.at(-1).linearX, 0.15);
-  time = 0.651;
+  time = 2.601;
   await controller.step({}, {}, {}, {});
   assert.equal(commands.at(-1).linearX, 0);
 });
@@ -263,6 +285,17 @@ test('web bridge waits for policy acknowledgement and publishes top-level policy
   assert.equal(messages[2].error, 'weights unavailable');
 });
 
+/** Sensor backpressure bounds the WebSocket queue while command acknowledgements bypass it. */
+test('web bridge drops bulk frames before they can delay command acknowledgements', (t) => {
+  const bridge = Object.create(MujocoBridgeClient.prototype);
+  const sent = [];
+  bridge.socket = { readyState: 1, bufferedAmount: 3 * 1024 * 1024, send: (value) => sent.push(value) };
+  t.mock.method(globalThis, 'WebSocket', class { static OPEN = 1; });
+  assert.equal(bridge._send({ type: 'camera', data: 'bulk' }), false);
+  assert.equal(bridge._send({ type: 'command_ack', sequence: 7, accepted: true }, true), true);
+  assert.deepEqual(JSON.parse(sent[0]), { type: 'command_ack', sequence: 7, accepted: true });
+});
+
 /** Load the real Go2 mesh model into MuJoCo WASM and exercise motor-driven locomotion. */
 test('actual WASM Go2 physics stands and responds to continuous Twist', { timeout: 120000 }, async () => {
   const mujoco = await loadMujoco();
@@ -301,9 +334,34 @@ test('actual WASM Go2 physics stands and responds to continuous Twist', { timeou
   assert.ok(data.qpos[0] > start[0] + 0.05, `forward displacement ${data.qpos[0] - start[0]}`);
   assert.ok(data.qpos[2] > 0.2, `moving height ${data.qpos[2]}`);
   assert.equal(controller.getRobotState(model, data).joints.names.length, 12);
-  wallTime += 0.351;
+  wallTime += 2.001;
   await controller.step({}, model, data, mujoco);
   assert.deepEqual(controller.twist, { linearX: 0, linearY: 0, angularZ: 0 });
+
+  controller.reset(model, data);
+  for (let i = 0; i < 500; i++) {
+    wallTime += 0.002;
+    await controller.step({}, model, data, mujoco);
+    mujoco.mj_step(model, data);
+  }
+  const startYaw = Math.atan2(
+    2 * (data.qpos[3] * data.qpos[6] + data.qpos[4] * data.qpos[5]),
+    1 - 2 * (data.qpos[5] ** 2 + data.qpos[6] ** 2));
+  const turnStart = data.qpos.slice(0, 2);
+  for (let i = 0; i < 1500; i++) {
+    wallTime += 0.002;
+    if (i % 50 === 0) controller.setTwist({ angularZ: 0.12 });
+    await controller.step({}, model, data, mujoco);
+    mujoco.mj_step(model, data);
+  }
+  const endYaw = Math.atan2(
+    2 * (data.qpos[3] * data.qpos[6] + data.qpos[4] * data.qpos[5]),
+    1 - 2 * (data.qpos[5] ** 2 + data.qpos[6] ** 2));
+  const yawDelta = Math.atan2(Math.sin(endYaw - startYaw), Math.cos(endYaw - startYaw));
+  assert.ok(yawDelta > 0.08, `low-speed yaw displacement ${yawDelta}`);
+  assert.ok(Math.hypot(data.qpos[0] - turnStart[0], data.qpos[1] - turnStart[1]) < 0.16,
+    `in-place turn translation ${Math.hypot(data.qpos[0] - turnStart[0], data.qpos[1] - turnStart[1])}`);
+  assert.ok(data.qpos[2] > 0.2, `turning height ${data.qpos[2]}`);
   await controller.dispose();
   data.delete();
   model.delete();

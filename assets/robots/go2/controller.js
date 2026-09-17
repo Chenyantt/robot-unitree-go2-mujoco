@@ -9,12 +9,17 @@ const STANCE_FRACTION = 0.56;
 const STRIDE_LENGTH = 0.13;
 const LATERAL_STRIDE = 0.075;
 const FOOT_CLEARANCE = 0.045;
+const TWIST_LIMITS = Object.freeze([0.6, 0.35, 0.6]);
+const POLICY_COMMAND_LIMITS = Object.freeze([0.6, 0.35, 1.0]);
+const POLICY_FEEDFORWARD = Object.freeze([2.0, 2.0, 2.2]);
+const POLICY_INTEGRAL_GAINS = Object.freeze([2.5, 2.5, 5.0]);
+const WEB_COMMAND_WATCHDOG_S = 2.0;
 
 export const GO2_LEGS = Object.freeze({
-  FL: Object.freeze({ side: 1, phaseOffset: 0 }),
-  FR: Object.freeze({ side: -1, phaseOffset: 0.5 }),
-  RL: Object.freeze({ side: 1, phaseOffset: 0.5 }),
-  RR: Object.freeze({ side: -1, phaseOffset: 0 })
+  FL: Object.freeze({ front: 1, side: 1, phaseOffset: 0 }),
+  FR: Object.freeze({ front: 1, side: -1, phaseOffset: 0.5 }),
+  RL: Object.freeze({ front: -1, side: 1, phaseOffset: 0.5 }),
+  RR: Object.freeze({ front: -1, side: -1, phaseOffset: 0 })
 });
 
 export const GO2_ACTUATORS = Object.freeze(
@@ -98,7 +103,7 @@ export function computeGo2Targets(command, phase) {
     const lift = inStance ? 0 : Math.sin(Math.PI * progress);
     const legForward = clamp(command.forward - config.side * command.turn * 0.65, -1, 1);
     const x = STRIDE_LENGTH * legForward * travel;
-    const y = LATERAL_STRIDE * command.lateral * travel;
+    const y = (LATERAL_STRIDE * command.lateral + 0.115 * config.front * command.turn) * travel;
     const z = HOME_FOOT_Z + FOOT_CLEARANCE * lift * commandMagnitude;
     const angles = legInverseKinematics(x, y, z);
     targets[`${leg}_hip`] = angles.hip;
@@ -126,6 +131,7 @@ export class Go2Controller extends BaseController {
     this.clock = clock;
     this.lastTwistTime = -Infinity;
     this.velocityIntegral = new Float64Array(3);
+    this.policyVelocityIntegral = new Float64Array(3);
   }
 
   /** Resolve the twelve driven joints and restore the scene's home keyframe. */
@@ -187,12 +193,16 @@ export class Go2Controller extends BaseController {
 
     if (keyStates.Space || keyStates.KeyX) this.emergencyStop();
     const manual = ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'KeyX'].some((key) => keyStates[key]);
-    if (!manual && this.externalControlEnabled && this.clock() - this.lastTwistTime > 0.35) this.emergencyStop();
+    if (!manual && this.externalControlEnabled &&
+        this.clock() - this.lastTwistTime > WEB_COMMAND_WATCHDOG_S) this.emergencyStop();
     const keys = computeGo2Command(keyStates);
     const velocity = !manual && this.externalControlEnabled ? this.twist : {
       linearX: keys.forward * 0.6, linearY: keys.lateral * 0.35, angularZ: keys.turn * 0.6
     };
-    if (await this.policy.step(model, data, this.joints, this.actuators, velocity)) return;
+    const policyVelocity = this.policy.status.loaded
+      ? this.trackedPolicyCommand(velocity, model, data)
+      : velocity;
+    if (await this.policy.step(model, data, this.joints, this.actuators, policyVelocity)) return;
     if (!this.initialized) return;
     const rawCommand = keyStates.KeyX
       ? { forward: 0, turn: 0, lateral: 0 }
@@ -235,6 +245,32 @@ export class Go2Controller extends BaseController {
       return clamp(value / limits[i] + this.velocityIntegral[i], -1, 1) * this.gaitBlend;
     });
     return { forward: values[0], lateral: values[1], turn: values[2] };
+  }
+
+  /** Compensate policy response so low-speed Twist tracks measured body velocity. */
+  trackedPolicyCommand(velocity, model, data) {
+    const desired = [velocity.linearX, velocity.linearY, velocity.angularZ]
+      .map((value, i) => clamp(value, -TWIST_LIMITS[i], TWIST_LIMITS[i]));
+    const offset = this.baseBody * 9;
+    const local = [0, 1].map((axis) => [0, 1, 2].reduce(
+      (sum, row) => sum + data.xmat[offset + row * 3 + axis] * data.qvel[row], 0));
+    const measured = [...local, data.qvel[5]];
+    const result = desired.map((value, i) => {
+      if (Math.abs(value) <= 1e-6) {
+        this.policyVelocityIntegral[i] = 0;
+        return 0;
+      }
+      const error = value - measured[i];
+      const raw = POLICY_FEEDFORWARD[i] * value + this.policyVelocityIntegral[i];
+      if (Math.abs(raw) < POLICY_COMMAND_LIMITS[i] || raw * error < 0) {
+        this.policyVelocityIntegral[i] = clamp(
+          this.policyVelocityIntegral[i] + POLICY_INTEGRAL_GAINS[i] * error * model.opt.timestep,
+          -POLICY_COMMAND_LIMITS[i], POLICY_COMMAND_LIMITS[i]);
+      }
+      return clamp(POLICY_FEEDFORWARD[i] * value + this.policyVelocityIntegral[i],
+        -POLICY_COMMAND_LIMITS[i], POLICY_COMMAND_LIMITS[i]);
+    });
+    return { linearX: result[0], linearY: result[1], angularZ: result[2] };
   }
 
   /** Support gravity through feet in floor contact using joint torques, matching the native controller. */
@@ -294,6 +330,7 @@ export class Go2Controller extends BaseController {
     this.twist = { linearX: 0, linearY: 0, angularZ: 0 };
     this.gaitBlend = 0;
     this.velocityIntegral.fill(0);
+    this.policyVelocityIntegral.fill(0);
     return true;
   }
 
@@ -302,6 +339,7 @@ export class Go2Controller extends BaseController {
     if (command.id !== 'moe_rough' || !['load', 'unload'].includes(command.action)) {
       throw new Error('Expected policy moe_rough with action load or unload');
     }
+    this.policyVelocityIntegral.fill(0);
     if (command.action === 'unload') { await this.policy.unload(); return true; }
     return this.policy.load(model);
   }

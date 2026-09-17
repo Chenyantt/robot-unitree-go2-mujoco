@@ -1,5 +1,6 @@
 """Offline chassis and configuration smoke tests; no ROS or motion publisher is started."""
 import importlib
+import json
 import math
 from pathlib import Path
 import sys
@@ -17,7 +18,10 @@ class PrimitiveStub:
     def __init__(self, **kwargs):
         self.id = kwargs["id"]
 
-    def grpc(self, _contract):
+    def grpc(self, _contract, **_kwargs):
+        return lambda function: function
+
+    def mcp(self, _contract, **_kwargs):
         return lambda function: function
 
     def __getattr__(self, name):
@@ -40,8 +44,12 @@ def load_chassis():
     definitions = {
         "robonix_api": dict(Primitive=PrimitiveStub, Ok=lambda: None, Err=str),
         "chassis_pb2": dict(ExecuteMoveCommand_Response=SimpleNamespace),
+        "chassis_mcp": dict(ExecuteMoveCommand_Request=SimpleNamespace,
+                            ExecuteMoveCommand_Response=SimpleNamespace),
         "std_msgs_pb2": dict(String=SimpleNamespace),
+        "std_msgs_mcp": dict(String=SimpleNamespace),
         "geometry_msgs.msg": dict(Twist=Twist),
+        "nav_msgs.msg": dict(Odometry=SimpleNamespace),
     }
     for name, attributes in definitions.items():
         modules[name] = ModuleType(name)
@@ -89,6 +97,52 @@ class RuntimeTests(unittest.TestCase):
                 self.chassis.move(self.request(linear_x=0.18))
         self.assertEqual(self.messages[-1].linear.x, 0.0)
         self.assertFalse(self.chassis.motion_lock.locked())
+
+    def test_relative_distance_and_rotation_use_measured_odometry(self):
+        """Closed-loop requests stop from pose feedback in both signed directions."""
+        clock = [0.0]
+        pose = [0.0, 0.0, math.radians(175)]
+        velocity = [0.0, 0.0]
+        messages = self.messages
+        chassis = self.chassis
+
+        class FakeStop:
+            """Advance deterministic planar odometry during each control wait."""
+
+            @staticmethod
+            def is_set():
+                return False
+
+            @staticmethod
+            def wait(seconds):
+                pose[0] += velocity[0] * math.cos(pose[2]) * seconds
+                pose[1] += velocity[0] * math.sin(pose[2]) * seconds
+                pose[2] += velocity[1] * seconds
+                clock[0] += seconds
+                chassis.odom_state = (*pose, velocity[0], velocity[1], clock[0])
+                return False
+
+        def publish(message):
+            """Capture each command and make it the velocity integrated by FakeStop."""
+            messages.append(message)
+            velocity[:] = [message.linear.x, message.angular.z]
+
+        chassis.odom_state = (*pose, 0.0, 0.0, clock[0])
+        chassis.cmd_vel_pub = SimpleNamespace(publish=publish)
+        with patch.object(chassis, "stopped", FakeStop()), \
+                patch.object(chassis.time, "monotonic", side_effect=lambda: clock[0]):
+            forward = chassis.move(self.request(forward_m=0.8))
+            backwards = chassis.move(self.request(forward_m=-0.4))
+            short = chassis.move(self.request(forward_m=0.05))
+            rotation = chassis.move_mcp(self.request(rotate_deg=30))
+        reports = [json.loads(result.status.data)
+                   for result in (forward, backwards, short, rotation)]
+        self.assertLess(abs(reports[0]["error_m"]), 0.031)
+        self.assertLess(abs(reports[1]["error_m"]), 0.031)
+        self.assertGreater(reports[2]["actual_m"], 0.03)
+        self.assertLess(abs(reports[2]["error_m"]), 0.016)
+        self.assertLess(abs(reports[3]["error_deg"]), 4.1)
+        self.assertEqual((messages[-1].linear.x, messages[-1].angular.z), (0.0, 0.0))
 
     def test_deactivated_rejects_motion(self):
         self.chassis.deactivate()

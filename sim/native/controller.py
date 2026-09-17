@@ -21,6 +21,9 @@ SCRIPTED_HOME = np.tile([0.0, 0.9, -1.8], 4)
 SCRIPTED_KP = np.tile([45.0, 55.0, 60.0], 4)
 SCRIPTED_KD = np.tile([1.5, 2.0, 2.0], 4)
 COMMAND_LIMITS = np.array([0.6, 0.35, 0.6])
+POLICY_COMMAND_LIMITS = np.array([0.6, 0.35, 1.0])
+POLICY_FEEDFORWARD = np.array([2.0, 2.0, 2.2])
+POLICY_INTEGRAL_GAINS = np.array([2.5, 2.5, 5.0])
 SCRIPTED_COMMAND_LIMITS = np.array([0.4, 0.15, 0.5])
 SCRIPTED_UPRIGHT_RECOVERY_COS = 0.72
 SCRIPTED_UPRIGHT_FULL_SPEED_COS = 0.90
@@ -131,6 +134,7 @@ class Go2Controller:
         self.phase = 0.0
         self.gait_blend = 0.0
         self.velocity_integral = np.zeros(3)
+        self.policy_velocity_integral = np.zeros(3)
         self.history[:] = 0
         self.last_action[:] = 0
         self.targets[:] = SCRIPTED_HOME
@@ -235,6 +239,7 @@ class Go2Controller:
         self.last_action[:] = 0
         self.next_policy_time = float(self.data.time)
         self.velocity_integral[:] = 0
+        self.policy_velocity_integral[:] = 0
 
     def _scripted_command(self, command: np.ndarray) -> np.ndarray:
         """Correct measured gait drift with bounded, anti-windup velocity integration."""
@@ -251,6 +256,27 @@ class Go2Controller:
         integrate = (np.abs(raw) < 1) | (raw * error < 0)
         self.velocity_integral += np.array([4, 4, 2])*error*self.model.opt.timestep*integrate
         return np.clip(normalized + self.velocity_integral, -1, 1)*self.gait_blend
+
+    def _tracked_policy_command(self, command: np.ndarray) -> np.ndarray:
+        """Compensate policy response so low-speed Twist tracks measured body velocity."""
+        desired = np.clip(command, -COMMAND_LIMITS, COMMAND_LIMITS)
+        active = np.abs(desired) > 1e-6
+        self.policy_velocity_integral[~active] = 0
+        if not active.any():
+            return np.zeros(3)
+        matrix = self.data.xmat[self.base].reshape(3, 3)
+        local_velocity = matrix.T @ self.data.qvel[self.base_dof:self.base_dof+3]
+        measured = np.r_[local_velocity[:2], self.data.qvel[self.base_dof+5]]
+        error = desired - measured
+        raw = POLICY_FEEDFORWARD*desired + self.policy_velocity_integral
+        integrate = active & ((np.abs(raw) < POLICY_COMMAND_LIMITS) | (raw*error < 0))
+        self.policy_velocity_integral += (
+            POLICY_INTEGRAL_GAINS*error*CONTROL_DT*integrate)
+        self.policy_velocity_integral[:] = np.clip(
+            self.policy_velocity_integral, -POLICY_COMMAND_LIMITS, POLICY_COMMAND_LIMITS)
+        return np.where(active, np.clip(
+            POLICY_FEEDFORWARD*desired + self.policy_velocity_integral,
+            -POLICY_COMMAND_LIMITS, POLICY_COMMAND_LIMITS), 0)
 
     def _policy_command(self, message: dict) -> bool:
         """Load atomically; a failed load retains the currently active controller."""
@@ -299,8 +325,9 @@ class Go2Controller:
         now = float(self.data.time)
         if self.session is not None and now + 1e-9 >= self.next_policy_time:
             try:
+                policy_command = self._tracked_policy_command(command)
                 self.history[:-1] = self.history[1:]
-                self.history[-1] = self._observation(command)
+                self.history[-1] = self._observation(policy_command)
                 self.last_action[:] = self._infer(self.session, self.history)
                 self.next_policy_time = now + CONTROL_DT
             except Exception as error:

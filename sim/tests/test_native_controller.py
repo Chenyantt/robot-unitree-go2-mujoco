@@ -215,10 +215,42 @@ class NativeControllerTests(unittest.TestCase):
         self.assertTrue(controller.command({"type": "policy", "action": "load"}), controller.policy_status)
         np.testing.assert_array_equal(first, controller._infer(controller.session, history))
 
+    def test_real_policy_tracks_navigation_speed_in_both_directions(self):
+        """Measure low-speed translation and turning through the released ONNX policy."""
+        commands = ([.18, 0, 0], [-.18, 0, 0], [0, 0, .3], [0, 0, -.3])
+        for command in commands:
+            with self.subTest(command=command):
+                controller = Go2Controller(self.model, mujoco.MjData(self.model))
+                controller.clock = lambda: controller.data.time
+                advance(controller, 1)
+                self.assertTrue(controller.command(
+                    {"type": "policy", "action": "load"}), controller.policy_status)
+                samples = []
+                for index in range(round(8 / self.model.opt.timestep)):
+                    if index % 50 == 0:
+                        controller.command(dict(zip(
+                            ("type", "linearX", "linearY", "angularZ"),
+                            ("cmd_vel", *command))))
+                    controller.step()
+                    mujoco.mj_step(self.model, controller.data)
+                    if index >= round(6 / self.model.opt.timestep):
+                        matrix = controller.data.xmat[controller.base].reshape(3, 3)
+                        local = matrix.T @ controller.data.qvel[:3]
+                        samples.append([local[0], local[1], controller.data.qvel[5]])
+                mean = np.mean(samples, axis=0)
+                axis = 0 if command[0] else 2
+                self.assertAlmostEqual(mean[axis], command[axis], delta=.09)
+                self.assertGreater(controller.data.qpos[2], .23)
+                self.assertGreater(controller.data.xmat[controller.base, 8], .9)
+                controller.command({"type": "cmd_vel"})
+                controller.step()
+                np.testing.assert_array_equal(controller.policy_velocity_integral, 0)
+
     def test_scripted_velocity_tracking_and_reversal(self):
         """Measure settled body Twist for forward, reverse, lateral and yaw commands."""
         commands = ([.3, 0, 0], [-.3, 0, 0], [.1, 0, 0], [-.1, 0, 0],
-                    [0, .1, 0], [0, -.1, 0], [0, 0, .3], [0, 0, -.3])
+                    [0, .1, 0], [0, -.1, 0], [0, 0, .3], [0, 0, -.3],
+                    [0, 0, .12], [0, 0, -.12])
         for command in commands:
             with self.subTest(command=command):
                 self.controller.reset()

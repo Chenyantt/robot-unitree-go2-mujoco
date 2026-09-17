@@ -47,7 +47,7 @@ robot:
       exports:
         - provider_id: go2_chassis
           capabilities:
-            - {path: robonix/primitive/chassis/move, description: "Execute a short Go2 velocity burst."}
+            - {path: robonix/primitive/chassis/move, description: "Execute a measured base-relative forward/backward distance or yaw rotation; use navigation for an absolute Scene map-frame pose."}
             - {path: robonix/primitive/chassis/twist_in, description: "Continuous base-frame velocity input for navigation."}
             - {path: robonix/primitive/chassis/odom, description: "Measured simulated base odometry."}
       components:
@@ -83,6 +83,7 @@ description:
   summary: "Web/native MuJoCo Go2 with exploration and live Scene semantic navigation."
   can_do:
     - "Build maps and localize with LiDAR, odometry, and front RGB-D."
+    - "Execute user-requested base-relative forward/backward distances and yaw rotations with go2_chassis; reserve navigation for absolute map poses and Scene goals."
     - "Explore at 0.18 m/s using the live occupancy map and navigation service."
     - "Find observed objects with Scene list_objects, request goal_near, then navigate to the returned pose."
     - "In scenesmith_multilevel_house, traverse the calibrated main stair and switch between floor 1 and floor 2 maps."

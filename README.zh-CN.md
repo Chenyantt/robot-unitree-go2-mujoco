@@ -1,51 +1,167 @@
-# Unitree Go2 MuJoCo 本体包
+# Unitree Go2 MuJoCo for Robonix
 
-本项目提供 Robonix Go2 仿真本体包，支持浏览器 MuJoCo WASM 和 native Python
-MuJoCo 两种后端。启动时 ONNX 策略默认关闭，两种后端都可在界面中 Load/Disable
-随包提供的 go2_rl_gym MoE 策略，无需重新训练。
+<p align="center">
+  <strong>简体中文</strong> | <a href="README.md">English</a>
+</p>
 
-![Go2 在 SceneSmith House 185 中](docs/media/native-scenesmith_house_185.png)
+<p align="center">
+  <img src="docs/media/scene185_native.png" alt="原生 MuJoCo 中运行于 SceneSmith House 185 的 Unitree Go2" width="900">
+</p>
 
-## 安装和配置
+这是一个面向 Robonix 的 Unitree Go2 仿真本体包，同时支持 Web MuJoCo WASM 与
+native Python MuJoCo 后端。两种后端提供一致的底盘、LiDAR、IMU、RGB-D、建图、
+探索、导航和 Scene capability。
 
-本机已安装 Robonix，源码位于 ~/robonix。环境需要 Docker Compose、Node.js 20+、
-Python 3.10+、uv、rbnx。native 配置使用 WSLg/X11 和硬件 OpenGL；
-普通 Linux 机器需要调整 sim/compose.native.yaml 的显示设备挂载。
+随包提供的 `go2_rl_gym` MoE ONNX 策略可以在仿真运行期间动态 Load/Disable，且
+**启动时默认关闭**。未加载策略时使用确定性关节力矩步态完成室内平地运动。本包
+不包含真实宇树通信、机械臂、语音或策略训练依赖。
+
+## 运行画面
+
+### 室内导航
+
+| Web MuJoCo | Native MuJoCo |
+| --- | --- |
+| ![Web MuJoCo 中的 House 185](docs/media/scene185_web.png) | ![原生 MuJoCo 中的 House 185](docs/media/scene185_native.png) |
+| SceneSmith House 185 | SceneSmith House 185 |
+
+两种后端发布相同的 ROS 2 传感器与里程计接口。碰撞、LiDAR 和深度数据均来自
+MuJoCo 几何，SceneSmith Mesh 负责场景视觉展示。
+
+### 全地形策略
+
+| 楼梯场景 | 赛道场景 |
+| --- | --- |
+| ![原生 MuJoCo 楼梯场景](docs/media/rl_stairs_native.png) | ![原生 MuJoCo 赛道场景](docs/media/rl_track_native.png) |
+| `go2_rl_stairs` | `go2_rl_track` |
+
+这两个场景用于直接验证强化学习策略，不包含室内导航所需的标定地图和语义标注。
+
+## 能力
+
+| 部件或服务 | Provider | 对外能力 |
+| --- | --- | --- |
+| Go2 底盘 | `go2_chassis` | 里程计闭环相对运动、连续 Twist、里程计 |
+| MID-360 LiDAR | `mid360_lidar` | 2D LaserScan、3D PointCloud2、单帧扫描 |
+| MID-360 IMU | `mid360_imu` | 角速度和线加速度 |
+| 前置 RGB-D 相机 | `front_camera` | RGB、光轴深度、标定数据、单帧采集 |
+| RTAB-Map | `mapping` | 占据地图、融合点云、map-frame 位姿、地图持久化 |
+| Nav2 | `nav2` | 绝对位姿导航、速度限制、障碍规避 |
+| Scene | `scene` | 已观察物体、空间上下文、安全接近目标 |
+| Explore | `explore` | 异步前沿探索 |
+| 楼层切换 | `floor_transition` | 标定楼梯通行与分楼层地图切换 |
+
+“向前移动 0.3 米”一类相对命令使用底盘实测里程计闭环；地图绝对坐标和 Scene
+物体目标使用 Nav2。语义导航只能前往 RGB-D 相机已经观察到的物体，不会把仿真器
+中的物体真值坐标直接注入 Scene。
+
+## 本体结构
+
+```text
+rbnx chat / rbnx ask
+        |
+Pilot + Executor + Atlas + Soma
+        |
+Scene / Mapping / Nav2 / Explore / Floor Transition
+        |
+四个本地 primitive
+        |
+ROS 2 <-> WebSocket bridge <-> Web MuJoCo WASM
+                         \----> native Python MuJoCo
+                               |-- 关节力矩控制
+                               |-- LiDAR、IMU 与 RGB-D
+                               `-- 可选 ONNX 推理
+```
+
+本体尺寸和 capability 组合定义在 `soma.yaml`，坐标树位于 `urdf/go2.urdf`，
+本体专属 Mapping 与 Nav2 参数位于 `config/`。运行时边界见
+[仿真架构](docs/ARCHITECTURE.md)。
+
+## 环境要求
+
+推荐使用 x86_64 Ubuntu 22.04 或 WSL2，并准备：
+
+- Docker Engine 与 Compose plugin；
+- Node.js 20 或更高版本、Python 3.10+、`uv` 和 `curl`；
+- 已安装的 `rbnx` CLI 与本地 Robonix 源码树；
+- Web 后端所需的 Chromium 和 WebGL 2；
+- native viewer 所需的 X11/WSLg、硬件 OpenGL 和已配置的 GPU 设备；
+- bootstrap 阶段访问 npm、GitHub 和 Playwright 下载服务的网络。
+
+native MuJoCo 物理和随包 ONNX 网络在 CPU 上运行，native viewer 与离屏 RGB
+相机使用 OpenGL。`--headless` 只关闭 viewer，相机渲染仍需正常工作。
+
+## 第一次安装
+
+### 1. 安装 Robonix
+
+先安装 Robonix，并确保本机可以访问其源码目录。
+
+### 2. 获取并配置本体包
 
 ```bash
+git clone <repository-url> ~/robot-unitree-go2_mujoco
 cd ~/robot-unitree-go2_mujoco
 cp .env.example .env
-# 在 .env 中配置 ROBONIX_SOURCE_PATH、VLM_BASE_URL、VLM_API_KEY、VLM_MODEL。
+```
+
+编辑 `.env`，至少填写：
+
+```dotenv
+ROBONIX_SOURCE_PATH=/home/your-name/robonix
+VLM_BASE_URL=your-model-url
+VLM_API_KEY=replace-me
+VLM_MODEL=your-model-name
+```
+
+凭据应保存在被忽略的 `.env` 或环境变量中，不要提交到 Git。仿真器本身不需要
+VLM key；Pilot 和 Scene 使用它完成语言与视觉推理。
+
+### 3. 构建
+
+```bash
 bash scripts/bootstrap.sh
 ```
 
-已经配置好本地 .env 的机器不要重复覆盖。凭据文件被版本控制忽略，
-不会由网页静态服务器提供。仿真本身不需要 VLM；Pilot 和 Scene 使用这些配置。
-运行资源和 ONNX 已包含在包内，普通启动不需要下载原始 SceneSmith 数据集。
+bootstrap 会安装前端依赖和 Playwright Chromium、构建 ROS 2 bridge 镜像、生成
+primitive binding、验证本地 package，并构建 Robonix deployment。运行资源和预训练
+策略已包含在仓库中，普通启动不需要下载 SceneSmith 数据集或重新训练策略。
 
-## 人工启动
+## 启动本体包
 
-终端一启动仿真，以下方式选择一种：
+建议使用三个终端。同一时刻只能有一个仿真后端和一套 Robonix 进程占用当前 ROS
+图与端口。
+
+### 终端 1：启动 MuJoCo 仿真
+
+Web 后端：
 
 ```bash
 cd ~/robot-unitree-go2_mujoco
-
-# Web 物理后端，自动打开浏览器。
 bash sim/start.sh --backend web --environment scenesmith_house_185
+```
 
-# 或 native 物理后端，打开 MuJoCo 原生窗口。
+native viewer：
+
+```bash
 bash sim/start.sh --backend native --viewer --environment scenesmith_house_185
+```
 
-# 或 native 无窗口；保留 RGB-D 相机渲染。
+native 无窗口模式：
+
+```bash
 bash sim/start.sh --backend native --headless --environment scenesmith_house_185
 ```
 
-等待 ready 提示。Web 仿真在启动脚本打开的浏览器窗口运行。
-普通控制入口为 http://127.0.0.1:5181/ ，native 控制页为
-http://127.0.0.1:5181/?backend=native ，健康检查为
-http://127.0.0.1:8766/health 。普通控制页连接现有仿真，不重建机器人。
+等待 `[sim/start] ... ready`。常用地址为：
 
-终端二启动本体包：
+```text
+Web 页面：      http://127.0.0.1:5181/
+Native 控制页： http://127.0.0.1:5181/?backend=native
+Bridge 健康：   http://127.0.0.1:8766/health
+```
+
+### 终端 2：加载 Robonix 本体包
 
 ```bash
 cd ~/robot-unitree-go2_mujoco
@@ -53,190 +169,126 @@ source scripts/env.sh
 rbnx boot --no-update-check
 ```
 
-终端三查看能力并交互：
+必须从仓库根目录执行，使 `rbnx` 能找到 `robonix_manifest.yaml`。Mapping、Nav2、
+Scene 和四个 primitive 应进入 `ACTIVE`；skill 在收到任务前保持 inactive 属于正常
+状态。
+
+### 终端 3：使用 rbnx chat
 
 ```bash
 cd ~/robot-unitree-go2_mujoco
 source scripts/env.sh
 rbnx caps -v
+rbnx tools
 rbnx chat
 ```
 
-可输入以下任务：
+可以尝试：
 
-- 拍摄前方相机，描述当前房间。
-- 以每秒 0.18 米探索房间，最长运行 120 秒，返回任务 ID。
-- 查询探索进度，然后取消该探索任务。
-- 列出 Scene 已观察到的物体。
-- 使用 Scene 查找最近的桌子，生成安全接近位姿，然后导航过去。
-- 在 `scenesmith_multilevel_house` 中上楼、下楼、去一楼或去二楼。
+```text
+拍摄前置相机并描述当前房间。
+向前移动 0.3 米。
+移动到地图坐标 x=6.09、y=2.05，最终朝向为 0 弧度。
+以不超过 0.18 米每秒的速度探索房间 120 秒，并返回任务 ID。
+列出 Scene 已观察到的物体。
+移动到最近的已观察桌子旁边。
+在双层房屋中上楼、下楼、去一楼或去二楼。
+```
 
-探索是异步任务，启动后用任务 ID 查询状态。探索、手动驾驶和导航不要并发控制本体。
-“桌子”等语义目标必须先被相机观察到；Scene 结合 RGB-D、地图和本体轮廓生成目标，
-没有用 XML 真实物体坐标冒充视觉感知。看不到的区域应先探索。
+Explore 和 Floor Transition 都是异步任务，应保存返回的 `run_id` 用于状态查询与
+取消。直接底盘运动、普通导航、探索和换层任务不能并发执行。
 
 ## 策略和操作
 
-Web 端策略选择和 `Load / Disable Policy` 位于右上角 `Simulation > Policy`，
-加载结果以实际后端确认和状态为准。默认生产模式不注册 Web 键盘运动监听，
-native viewer 也不接收本地运动按键，运动命令由 Robonix 下发。
+两种后端的策略选择与 `Load / Disable Policy` 均位于右上角
+`Simulation > Policy`。加载或禁用策略不会重置机器人位姿。生产模式不注册 Web
+键盘运动监听，也不注册 native viewer 运动按键，运动由 Robonix 托管。
 
-仅调试本地驾驶时显式添加 `--dev`：
+只有需要本地调试驾驶时才添加 `--dev`：
 
 ```bash
 bash sim/start.sh --backend web --dev --environment go2_rl_stairs
 bash sim/start.sh --backend native --viewer --dev --environment go2_rl_stairs
 ```
 
-dev 模式中 W/S 前后、A/D 转向、Q/E 横移、Space 停止、X 重置；
-native viewer 额外支持 L 切换策略。`--dev` 不影响 Robonix Twist 接口。
+开发按键为 W/S 前后、A/D 转向、Q/E 横移、Space 停止、X 重置；native viewer
+额外支持 L 加载或禁用策略。
 
-当前策略来自 go2_rl_gym 的
-go2_moe_cts_high_slope_thre_164k_0.6715。使用 5x45 维历史、50 Hz 推理、
-0.002 秒物理步长和原始 PD/动作缩放，详见
-[权重来源](assets/robots/go2/policy/moe_rough/UPSTREAM.md)。
-此次没有换成前面讨论的 v4.2。
+当前策略为 `wty-yy/go2_rl_gym` 的
+`go2_moe_cts_high_slope_thre_164k_0.6715`。模型输入五帧 45 维观测，以 50 Hz
+运行在 0.002 秒物理步长上，并保留上游关节顺序、动作缩放与 PD 增益。详见
+[策略来源](assets/robots/go2/policy/moe_rough/UPSTREAM.md)。
 
-卸载 ONNX 后使用确定性基础步态，适合室内平地。楼梯和障碍赛道应加载 RL 策略。
-加载/卸载保留机身位置和朝向；Reset 是另外的操作，建图或导航运行期间不要使用。
-基础步态的原地旋转同时生成前后和横向切向落足，并在机身大幅倾斜时抑制运动指令；
-正反向持续旋转、六方向行走和速度反转均有 native 物理回归测试。
+策略关闭时使用确定性关节力矩步态完成室内平地运动；策略加载后，速度闭环会补偿
+预训练模型在低速导航命令下的响应。两种控制器都不能保证在任意地形上安全通过。
 
 ## 场景
 
-| 环境 ID | 内容 |
+| 环境 ID | 用途 | Web | Native |
+| --- | --- | --- | --- |
+| `scenesmith_house_185` | 多房间客厅与浴室；默认建图/导航场景 | 支持 | 支持 |
+| `scenesmith_house_186` | 多房间卧室与浴室 | 支持 | 支持 |
+| `go2_rl_stairs` | go2_rl_gym 原始楼梯测试场景 | 支持 | 支持 |
+| `go2_rl_track` | go2_rl_gym 原始赛道 | 支持 | 支持 |
+| `scenesmith_multilevel_house` | 一段直楼梯连接的标定双层房屋 | 支持 | 支持；换层推荐使用 |
+
+切换场景前先停止 Robonix 和仿真，再使用新的环境 ID 重启，避免复用上一场景的
+地图和语义位姿。
+
+### 场景画廊
+
+#### Web MuJoCo
+
+| House 185 | House 186 |
 | --- | --- |
-| scenesmith_house_185 | 新的 House 185：客厅和浴室，默认场景 |
-| scenesmith_house_186 | 新的 House 186：卧室和浴室 |
-| go2_rl_stairs | go2_rl_gym 原始阶梯几何 |
-| go2_rl_track | go2_rl_gym 原始赛道几何 |
-| scenesmith_multilevel_house | House 191 + House 188 与人工标定直楼梯的双层场景 |
+| ![Web MuJoCo House 185](docs/media/scene185_web.png) | ![Web MuJoCo House 186](docs/media/scene_186_web.png) |
+| 楼梯 | 赛道 |
+| ![Web MuJoCo 楼梯](docs/media/rl_stairs_web.png) | ![Web MuJoCo 赛道](docs/media/rl_track_web.png) |
 
-两个住宅都是单层、多房间数据集场景，区别于之前的 House 187。
-五个场景均可由统一环境清单选择。双层换层闭环使用 native 后端完成验收。
-切换场景前先停止 Robonix 和仿真，
-再使用另一个 --environment 重启，避免沿用旧地图和语义位置。
+#### Native MuJoCo
 
-只测策略时可只开仿真，不启动 Robonix：
+| House 185 | House 186 |
+| --- | --- |
+| ![原生 MuJoCo House 185](docs/media/scene185_native.png) | ![原生 MuJoCo House 186](docs/media/scene186_native.png) |
+| 楼梯 | 赛道 |
+| ![原生 MuJoCo 楼梯](docs/media/rl_stairs_native.png) | ![原生 MuJoCo 赛道](docs/media/rl_track_native.png) |
 
-```bash
-bash sim/start.sh --backend native --viewer --dev --environment go2_rl_stairs
-# 在界面中 Load 后使用调试按键驾驶。
-```
+双层房屋：
 
-[场景来源与离线重新导入](docs/scenes.md)记录了源版本、校验和及命令。
-楼梯/赛道不承担二维 Scene/Nav2 跨层语义导航验收。
+<p align="center">
+  <img src="docs/media/scene_multifloors_native.png" alt="原生 MuJoCo 中的 SceneSmith 双层房屋" width="560">
+</p>
 
-双层 demo 推荐 native 后端：
+场景来源、校验和与可重复导入命令见 [docs/scenes.md](docs/scenes.md)。
+
+## 上下楼与楼层切换
+
+<p align="center">
+  <a href="docs/media/floor_transition.mp4">
+    <img src="docs/media/floor_transition.gif" alt="Go2 沿已标定直楼梯上楼" width="720">
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/media/floor_transition.mp4">观看 88 秒完整上楼与下楼演示</a>
+</p>
+
+`floor_transition` 是 `scenesmith_multilevel_house` 固定场景专用的 deployment
+skill。它使用确定性步态接近楼梯，在楼梯段加载 `moe_rough`，持续检查入口位置、
+朝向、中心线偏差、机身姿态和落地高度，最后切换到目标楼层地图。支持 `UP`、
+`DOWN`、`GO_TO_FLOOR(1|2)`、状态查询和取消。
+
+首次运行前安装随包地图：
+
+安装脚本会将仓库中的 xz 压缩数据库展开为运行时地图目录内的 `rtabmap.db`，无需
+安装 Git LFS。
 
 ```bash
 bash scripts/install-prebuilt-maps.sh
-bash sim/start.sh --backend native --environment scenesmith_multilevel_house
+bash sim/start.sh --backend native --viewer --environment scenesmith_multilevel_house
 ```
 
-它使用独立的一、二楼地图和部署级 `floor_transition` skill，不修改系统 Scene、
-Mapping 或 Navigation 服务。设计、标注字段、scope 和人工验收步骤见
-[双楼层换层 Demo](docs/MULTI_FLOOR_DEMO.zh-CN.md)。
-
-## 上下楼技能
-
-`floor_transition` 是部署级、固定场景换层技能，用于让 Go2 在已经建图并完成楼梯
-标定的双层环境中执行以下命令：
-
-- `UP`：从一楼经已标定楼梯到二楼；
-- `DOWN`：从二楼经同一楼梯回到一楼；
-- `GO_TO_FLOOR(1|2)`：根据当前楼层决定是否换层；目标就是当前楼层时幂等成功，
-  不移动机器人；
-- `status` 和 `cancel`：按 `run_id` 查询阶段或请求停止当前换层任务。
-
-该技能不修改 Robonix 的系统服务。它通过 Atlas 使用现有 chassis、IMU、Mapping 和
-Navigation capability，通过 simulator bridge 管理 `moe_rough` 策略，并只读加载场景
-拥有的 [`multifloor.yaml`](assets/environments/scenesmith_multilevel_house/multifloor.yaml)。
-Scene 服务不是换层执行的关键依赖；楼梯坐标也不会写入 Scene 数据库。
-
-### 适用范围
-
-当前实现适用于满足以下条件的仿真或受控部署：
-
-- 环境 ID 为 `scenesmith_multilevel_house`，楼层固定为 1 和 2；
-- 使用人工测量并验证过的单段直楼梯，入口、中心线、目标高度和落地点稳定；
-- 每个楼层有独立的二维占据地图和 RTAB-Map 定位数据库；
-- 机器人能够在楼梯入口前使用平地步态定位，在楼梯段使用已验证的粗糙地形策略；
-- 楼梯区域无人、无动态障碍，且台阶尺寸、坡度、摩擦和平台空间与标定环境一致；
-- 任务只要求换层或到达指定楼层，不要求跨楼层语义物体导航。
-
-典型用途包括固定楼宇 Demo、算法联调、双层仿真回归、地图切换验证，以及在已知楼梯
-上的策略测试。将它移植到另一个 MuJoCo 场景时，应将其视为需要重新标定和重新验收的
-场景专用 skill，而不是直接复用坐标。
-
-### 前置条件
-
-启动换层任务前必须满足：
-
-1. 使用 native MuJoCo 启动正确场景；当前闭环只在 native 后端完成过验收。
-2. 两层地图存在于 `assets/maps/`，并通过 `scripts/install-prebuilt-maps.sh` 安装到
-   Mapping 地图目录。地图文件只有被纳入项目发布制品或提交到远程仓库后，其他使用者
-   才能在克隆项目后直接安装；脚本本身不会上传地图。当前完整地图 ID 为
-   `scenesmith_multilevel_floor_1_v2` 和 `scenesmith_multilevel_floor_2_v2`，分别包含
-   439 和 787 个 RTAB-Map 节点。仓库以 xz 压缩包保存数据库，安装脚本会在运行时
-   地图目录中将其展开为 `rtabmap.db`。
-3. `multifloor.yaml` 中的 `map_id`、楼梯入口、中心线、目标 X、楼层高度、速度和安全
-   阈值必须与当前场景一致。
-4. chassis odom、IMU、Mapping pose/load-map 和 Nav2 navigate/status/cancel capability
-   均为可用状态，simulator bridge 健康且能够确认策略加载/卸载。
-5. 物理楼层必须与 skill 持久化的 `current_floor` 一致。更换场景、重置机器人位置或
-   手工把机器人放到另一层后，不能沿用旧楼层状态和旧定位会话。
-6. Explore、普通 Navigation、手动驾驶和其他速度发布者均已停止。换层 skill 假设
-   自己独占 `/cmd_vel` 和楼梯策略生命周期。
-
-### 执行流程和策略生命周期
-
-Skill 激活时会验证场景，卸载可能已经加载的 `moe_rough`，等待 odom，然后以实际
-odom 位姿加载持久化楼层地图。每次换层按以下顺序执行：
-
-1. 确保 `moe_rough` 已卸载，使用确定性平地步态和 Nav2 到达楼梯入口附近；
-2. 进入连接区后停止使用 Nav2，由 skill 低速闭环对准人工标注的入口朝向；
-3. 校验入口位置和朝向后加载 `moe_rough`；
-4. 沿标定中心线发布有界 Twist，并持续检查横向偏差、机身直立度、行进方向、终点 X
-   和落地高度；
-5. 到达平台后立即停止并卸载 `moe_rough`，使用平地步态转到目标楼层标准朝向；
-6. 使用当前实际 odom 作为定位初值，加载目标楼层地图；地图加载成功后才更新并持久化
-   `current_floor`。
-
-如果 `moe_rough` 在任务开始前已经加载，skill 会先将其卸载，再在楼梯阶段重新加载。
-任一次策略切换没有得到后端确认，任务都会失败并停止，不会盲目继续运动。任务结束时
-策略应为 unloaded；不要在换层过程中从 UI 或其他节点并发切换策略。
-
-### 地图、Nav2 和 Scene 的换层语义
-
-- **Mapping**：由 skill 显式调用 `load_map` 切换到目标楼层的预建地图，模式为
-  `localization`。这是地图加载，不是重新建图；新观测不会自动写回随包地图。
-- **Nav2**：不重启。Mapping 发布新 `/map` 和定位关系后，Nav2 的 global/local
-  costmap static layer 会接收新地图，后续导航目标应使用目标楼层坐标。换层期间不得保留
-  另一个活动导航任务。当前 Demo 没有额外调用 `clear_costmap`，移植到更复杂环境时建议
-  增加新地图确认和 global/local costmap 清理屏障。
-- **Scene**：不会自动切换楼层语义对象。当前 skill 只读取场景文件中的楼梯标注，
-  不更新 Scene object graph，也不提供“到二楼某个物体附近”。若需要该能力，必须为对象
-  增加楼层归属，并在换层后切换或过滤对应楼层的语义数据。
-
-### 安全边界和不支持的场景
-
-当前版本明确不支持：
-
-- 未知楼梯自动检测、视觉发现楼梯或在线估计台阶几何；
-- 未标定场景、旋转楼梯、多段楼梯、多个候选楼梯、电梯和自动选择换层连接；
-- 楼梯上的动态避障、人群通行、湿滑或显著改变的摩擦条件；
-- 一张二维地图覆盖多层、跨层连续 Nav2 路径规划；
-- 换层后自动探索、自动更新预建地图或跨楼层物体导航；
-- 真实 Go2 硬件安全认证。当前安全阈值和测试结果仅覆盖该 MuJoCo 场景。
-
-位置、航向、中心线、直立度、目标高度、超时或地图加载任一检查失败时，skill 会发布
-零速度并返回失败；只有物理换层和目标地图加载都成功后才提交楼层状态。
-
-### 使用和验收
-
-自然语言交互可输入“上楼”“下楼”“去二楼”或“去一楼”。不依赖 Pilot/VLM 的确定性
-验收入口为：
+仿真和 Robonix 启动后，可使用不依赖 Pilot/VLM 的确定性命令：
 
 ```bash
 bash scripts/floor-transition.sh up
@@ -245,53 +297,92 @@ bash scripts/floor-transition.sh floor 2
 bash scripts/floor-transition.sh floor 1
 ```
 
-脚本会动态发现正式 MCP 端点，打印 `run_id` 和阶段变化，并等待终态。验收时应同时确认
-机器人实际到达目标平台、`current_floor` 正确、Mapping active map 与楼层一致、Nav2 保持
-ACTIVE，以及任务结束后 `moe_rough.loaded=false`。完整状态机、标注字段和实测结果见
+该 skill 仅适用于一段已知直楼梯和两份随包楼层地图，不支持自动发现未知楼梯、
+多个连接点选择、跨楼层单张二维路径规划或真实硬件安全认证。不要把现有坐标直接
+复制到其他场景。状态流程、标注字段、地图 ID、安全检查和人工验收见
 [双楼层换层 Demo](docs/MULTI_FLOOR_DEMO.zh-CN.md)。
 
-## 验证与停止
+## 验证
+
+离线测试：
 
 ```bash
 npm test
 python3 -m unittest discover -s primitives/tests
+```
 
-# 仿真和 Robonix 启动后检查传感器、本体注册和地图。
+仿真和 Robonix 启动后的在线验收：
+
+```bash
+# 传感器、provider 注册状态和地图：
 bash scripts/acceptance.sh --require-stack --require-map
 
-# 导航目标必须根据当前地图选择。
-bash scripts/acceptance.sh --navigate 5.6 2.4
+# 里程计闭环前进、后退与正反 30 度旋转：
+bash scripts/acceptance.sh --relative 0.4
+
+# 绝对地图位姿到达和取消；坐标应选择当前地图中的空闲位置：
+bash scripts/acceptance.sh --navigate 5.6 2.4 --yaw 0
+
+# Scene 物体接近与自主探索：
 bash scripts/acceptance.sh --semantic --object-id scene.object.table_001
 bash scripts/acceptance.sh --explore --explore-duration 150 --explore-timeout 240 --explore-speed 0.18
 
-# 独立加载四个 native 场景并验证相机、激光和策略切换。
+# Native 模型、传感器与策略切换：
 docker exec mujoco_go2_sim python3 /workspace/sim/tests/native_smoke.py --environment all --policy
 ```
 
-验收会移动仿真机器人，请先取消其他运动任务。完整结果、运行限制和系统变更见
-[架构说明](docs/ARCHITECTURE.md)与
-[双楼层换层 Demo](docs/MULTI_FLOOR_DEMO.zh-CN.md)。
+验收脚本会移动机器人。相对运动和绝对导航应在 `moe_rough` 关闭和加载两种状态下
+分别执行，且运行时不能存在其他运动控制任务。
 
-停止：
+## 停止
 
 ```bash
+cd ~/robot-unitree-go2_mujoco
 source scripts/env.sh
 rbnx shutdown
 bash sim/stop.sh
 ```
 
-每个启动终端中的 Ctrl-C 也能停止对应生命周期。
-仿真日志在 .runtime，Robonix 日志在 rbnx-boot/logs。
+两套生命周期相互独立：`rbnx shutdown` 不会停止 MuJoCo，`sim/stop.sh` 也不会停止
+Robonix。运行日志位于 `.runtime/` 和 `rbnx-boot/logs/`。
 
-## 实现范围
+## 添加场景
 
-四个原语为 go2_chassis、mid360_lidar、mid360_imu、front_camera；
-上层复用 Mapping、Navigation、Scene；本地 skills/explore 在原有接口上
-补充了本体轮廓检查、连通性检查、失败目标暂避、速度限制和取消确认；
-`skills/floor_transition` 负责固定双层场景的安全换层和地图切换。
-soma.yaml 与 urdf/go2.urdf 描述本体尺寸、轮廓和安装变换。
-本包不包含真实 Go2 硬件通信、语音或机械臂。
+环境 package 统一注册在 `assets/environments/manifest.json`。Mesh 场景通常包含
+`scene.xml`、`index.json`、`spawn.json` 以及引用的 mesh/texture。SceneSmith 转换、
+碰撞准备、出生点搜索、地图生成和来源校验见 [docs/scenes.md](docs/scenes.md)。
+新增场景应作为独立环境 package 接入，不需要为每个场景复制 Go2 primitive 或策略
+控制器。
 
-参考来源及许可证保留在 NOTICE、LICENSE、LICENSE.Apache-2.0 和各资源目录中。
-更多细节见 [架构说明](docs/ARCHITECTURE.md) 与
-[双楼层换层 Demo](docs/MULTI_FLOOR_DEMO.zh-CN.md)。
+## 限制与安全
+
+- 本包控制的是仿真 Go2，不是真实硬件安全层。
+- 直接相对运动不具备避障能力；房间尺度移动应使用 Nav2。
+- Scene 无法导航到尚未被传感器观察到的物体。
+- Explore、Navigation、直接运动和 Floor Transition 必须独占运动控制权。
+- 随包全地形策略是已发布的预训练控制器，不保证通过任意楼梯、斜坡、摩擦条件或
+  障碍几何。
+- Reset 或拖拽机器人会使活动 Mapping/Nav2 任务和持久化楼层状态失效。
+
+## 目录
+
+| 路径 | 作用 |
+| --- | --- |
+| `assets/robots/go2/` | Go2 MJCF、mesh、确定性控制器和 ONNX 策略 |
+| `assets/environments/` | 可独立选择的场景 package |
+| `primitives/` | 底盘、LiDAR、IMU 和 RGB-D provider |
+| `skills/explore/` | 前沿探索适配 |
+| `skills/floor_transition/` | 标定双层楼梯 skill |
+| `sim/native/` | native MuJoCo 运行时与策略推理 |
+| `sim/bridge/` | ROS 2 与 WebSocket bridge |
+| `src/` | Web MuJoCo 运行时、传感器和控制面板 |
+| `config/`、`soma.yaml`、`urdf/` | 导航参数、本体组成与坐标变换 |
+| `robonix_manifest.yaml` | Robonix deployment 入口 |
+
+## 上游项目与许可证
+
+本接入参考 [mujoco_robonix](../mujoco_robonix) 的运行模式，基于
+[MuJoCo-GS-Web](https://github.com/Vector-Wangel/MuJoCo-GS-Web)，并参考
+[真实 Go2 Robonix 本体包](https://github.com/syswonder/robot-unitree-go2)。MuJoCo
+本体资产保留 Unitree BSD 声明，前端基础保留 MIT 许可证，SceneSmith 资产和
+go2_rl_gym 权重/场景保留各自上游声明。详见 [NOTICE](NOTICE) 与仓库许可证文件。

@@ -1,5 +1,7 @@
 import { keyboardController } from './KeyboardControl.js';
 
+const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
+
 /** Encode packed sensor bytes without exceeding JavaScript's argument limit. */
 function typedArrayToBase64(array) {
   if (!array) return null;
@@ -69,7 +71,7 @@ export class MujocoBridgeClient {
           environment: this.demo.params.environment,
           robot: this.demo.params.robot,
           visualMode: this.demo.sceneManager.getVisualMode()
-        });
+        }, true);
       });
       this.socket.addEventListener('message', (event) => this._handleMessage(event.data));
       this.socket.addEventListener('error', () => {
@@ -90,9 +92,12 @@ export class MujocoBridgeClient {
     }
   }
 
-  _send(payload) {
+  _send(payload, priority = false) {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
-    this.socket.send(JSON.stringify(payload));
+    if (!priority && this.socket.bufferedAmount >= MAX_BUFFERED_BYTES) return false;
+    const encoded = JSON.stringify(payload);
+    if (!priority && this.socket.bufferedAmount + encoded.length > MAX_BUFFERED_BYTES) return false;
+    this.socket.send(encoded);
     return true;
   }
 
@@ -121,7 +126,7 @@ export class MujocoBridgeClient {
       } else if (message.type === 'reset') {
         accepted = keyboardController.resetRobot();
       } else if (message.type === 'ping') {
-        this._send({ type: 'pong', sequence: message.sequence, simulationTime: Number(this.demo.data?.time ?? 0) });
+        this._send({ type: 'pong', sequence: message.sequence, simulationTime: Number(this.demo.data?.time ?? 0) }, true);
         return;
       } else {
         accepted = false;
@@ -131,7 +136,7 @@ export class MujocoBridgeClient {
       error = String(failure.message ?? failure);
       this.status.lastError = error;
     }
-    this._send({ type: 'command_ack', sequence: message.sequence ?? null, accepted: Boolean(accepted), error });
+    this._send({ type: 'command_ack', sequence: message.sequence ?? null, accepted: Boolean(accepted), error }, true);
     if (message.type === 'policy') this._publishState();
   }
 
@@ -155,7 +160,7 @@ export class MujocoBridgeClient {
     const robotState = keyboardController.getRobotState();
     if (!robotState) return;
     const imu = this.demo.sensorSuite.latestImu;
-    this._send({
+    if (this._send({
       type: 'state',
       environment: this.demo.params.environment,
       simulationTime: Number(this.demo.data.time),
@@ -166,15 +171,14 @@ export class MujocoBridgeClient {
         gyroscope: finiteArray(imu.gyroscope),
         accelerometer: finiteArray(imu.accelerometer)
       } : null
-    });
-    this.status.stateFrames++;
+    })) this.status.stateFrames++;
   }
 
   /** Forward each new LiDAR scan and point cloud once. */
   _publishLidar() {
     const planar = this.demo.sensorSuite.latestPlanarLidar;
     if (planar && planar.timestamp !== this.lastPlanarTimestamp) {
-      this._send({
+      const sent = this._send({
         type: 'scan',
         timestamp: planar.timestamp,
         frame: 'mid360_link',
@@ -186,11 +190,11 @@ export class MujocoBridgeClient {
         rangesF32: typedArrayToBase64(planar.ranges)
       });
       this.lastPlanarTimestamp = planar.timestamp;
-      this.status.sensorFrames++;
+      if (sent) this.status.sensorFrames++;
     }
     const cloud = this.demo.sensorSuite.latestLidar;
     if (cloud && cloud.timestamp !== this.lastCloudTimestamp) {
-      this._send({
+      const sent = this._send({
         type: 'pointcloud',
         timestamp: cloud.timestamp,
         frame: 'mid360_link',
@@ -198,18 +202,19 @@ export class MujocoBridgeClient {
         xyzF32: typedArrayToBase64(cloud.pointsLocal)
       });
       this.lastCloudTimestamp = cloud.timestamp;
-      this.status.sensorFrames++;
+      if (sent) this.status.sensorFrames++;
     }
   }
 
   /** Capture the front RGB-D camera and encode optical-axis depth in metres. */
   _publishNextCamera() {
+    if (this.socket?.bufferedAmount >= MAX_BUFFERED_BYTES) return;
     const cameras = this.demo.sensorSuite.list().cameras;
     if (!cameras.length) return;
     const camera = cameras[this.cameraIndex++ % cameras.length];
     try {
       const frame = this.demo.sensorSuite.captureCamera(camera.id, { depth: camera.depth, updateStatus: false });
-      this._send({
+      if (this._send({
         type: 'camera',
         timestamp: frame.timestamp,
         id: frame.id,
@@ -223,8 +228,7 @@ export class MujocoBridgeClient {
           height: frame.depth.height,
           dataF32: typedArrayToBase64(frame.depth.data)
         } : null
-      });
-      this.status.sensorFrames++;
+      })) this.status.sensorFrames++;
     } catch (error) {
       this.status.lastError = `Camera publish failed: ${error}`;
     }

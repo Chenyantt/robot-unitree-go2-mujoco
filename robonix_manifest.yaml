@@ -89,6 +89,10 @@ service:
       action_wait_s: 120
       # Keep the terminal guard inside the 0.15 m Nav2 arrival tolerance.
       guard_terminal_xy_m: 0.10
+      # Browser physics can need several wall-clock seconds to establish a
+      # measurable low-speed terminal turn without being physically stuck.
+      guard_no_progress_s: 8.0
+      guard_terminal_timeout_s: 30.0
       dynamic_speed:
         max_linear_speed_mps: 0.25
         default_percentage: 80

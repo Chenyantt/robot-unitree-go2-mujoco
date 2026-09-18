@@ -5,6 +5,7 @@ Run: python3 -m unittest sim.tests.test_native_controller -v
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import math
 import queue
@@ -22,7 +23,11 @@ from sim.native.controller import (
     COMMAND_LIMITS, DEFAULT_JOINT_POS, Go2Controller, SCRIPTED_HOME,
     build_moe_rough_observation, compute_go2_targets,
 )
-from sim.native.runtime import NativeRuntime, configure_viewer_camera
+from sim.native.runtime import (
+    NativeRuntime,
+    configure_viewer_camera,
+    disable_mujoco_viewer_shortcuts,
+)
 from sim.native.scene_builder import NativeSceneBuilder
 from sim.native.sensors import NativeSensorSuite, pinhole_directions
 
@@ -429,6 +434,17 @@ class NativeControllerTests(unittest.TestCase):
         mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_MOVE_H, .15, 0, scene, camera)
         self.assertEqual(camera.type, mujoco.mjtCamera.mjCAMERA_FREE)
         self.assertGreater(np.linalg.norm(camera.lookat-previous), .01)
+
+    def test_native_viewer_render_shortcuts_are_disabled(self):
+        """Robot keys must not toggle MuJoCo visualization or rendering flags."""
+        disable_mujoco_viewer_shortcuts()
+        disable_mujoco_viewer_shortcuts()
+        library = ctypes.CDLL(str(Path(mujoco.__file__).with_name(
+            f"libmujoco.so.{mujoco.__version__}")))
+        for symbol, rows in (("mjVISSTRING", len(mujoco.mjVISSTRING)),
+                             ("mjRNDSTRING", len(mujoco.mjRNDSTRING))):
+            table = ((ctypes.c_char_p * 3) * rows).in_dll(library, symbol)
+            self.assertTrue(all(table[index][2] == b"" for index in range(rows)))
 
 
 class NativeWebsocketTests(unittest.IsolatedAsyncioTestCase):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import ctypes
 import json
 import os
 import queue
@@ -19,6 +20,22 @@ import websockets
 from sim.native.controller import Go2Controller, COMMAND_LIMITS
 from sim.native.scene_builder import NativeSceneBuilder
 from sim.native.sensors import NativeSensorSuite
+
+
+_MUJOCO_SHORTCUT_STORAGE = ctypes.create_string_buffer(b"")
+
+
+def disable_mujoco_viewer_shortcuts() -> None:
+    """Remove MuJoCo rendering hotkeys before Simulate builds its native UI."""
+    library_path = Path(mujoco.__file__).with_name(
+        f"libmujoco.so.{mujoco.__version__}")
+    library = ctypes.CDLL(str(library_path))
+    empty = ctypes.cast(_MUJOCO_SHORTCUT_STORAGE, ctypes.c_char_p)
+    for symbol, rows in (("mjVISSTRING", len(mujoco.mjVISSTRING)),
+                         ("mjRNDSTRING", len(mujoco.mjRNDSTRING))):
+        table = ((ctypes.c_char_p * 3) * rows).in_dll(library, symbol)
+        for index in range(rows):
+            table[index][2] = empty
 
 
 def encoded(array: np.ndarray) -> str:
@@ -74,6 +91,7 @@ class NativeRuntime:
         try:
             if self.viewer_enabled:
                 import mujoco.viewer
+                disable_mujoco_viewer_shortcuts()
                 viewer_options = {"show_left_ui": False, "show_right_ui": False}
                 if self.developer_mode:
                     viewer_options["key_callback"] = self.keys.put

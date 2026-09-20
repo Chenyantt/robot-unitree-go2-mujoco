@@ -9,6 +9,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from sim.native.named_actions import NamedActionManager
+
 
 LEGS = ("FL", "FR", "RL", "RR")
 ACTUATORS = tuple(f"{leg}_{joint}" for leg in LEGS for joint in ("hip", "thigh", "calf"))
@@ -87,7 +89,9 @@ class Go2Controller:
     """Accept continuous Twist and switch joint controllers without moving qpos."""
 
     def __init__(self, model: mujoco.MjModel, data: mujoco.MjData,
-                 policy_dir: Path | None = None, clock=time.monotonic) -> None:
+                 policy_dir: Path | None = None, clock=time.monotonic,
+                 action_profile: Path | None = None, environment_id: str = "",
+                 action_assets: Path | None = None) -> None:
         """Resolve named transmissions and initialize the robot at its home key."""
         self.model, self.data, self.clock = model, data, clock
         self.policy_dir = policy_dir or (
@@ -114,6 +118,10 @@ class Go2Controller:
         self.last_action = np.zeros(12, dtype=np.float32)
         self.twist = np.zeros(3)
         self.targets = SCRIPTED_HOME.copy()
+        self.command_error: str | None = None
+        self.named_actions = NamedActionManager(
+            self, action_profile, environment_id,
+            action_assets or Path(__file__).resolve().parents[2] / ".runtime/stunt-assets")
         self.reset()
 
     def _id(self, kind, name: str) -> int:
@@ -146,14 +154,20 @@ class Go2Controller:
         self.kp, self.kd = SCRIPTED_KP.copy(), SCRIPTED_KD.copy()
         self.feedforward = np.zeros(12)
         self.transition_feedforward = self.feedforward.copy()
+        self.command_error = None
+        self.named_actions.reset()
         mujoco.mj_forward(self.model, self.data)
 
     def command(self, message: dict) -> bool:
         """Validate Twist and policy requests, returning an acknowledgement flag."""
         if not isinstance(message, dict):
             return False
+        self.command_error = None
         kind = message.get("type")
         if kind == "cmd_vel":
+            if self.named_actions.active:
+                self.command_error = "named action owns motor control"
+                return False
             try:
                 values = np.array([float(message.get(key, 0))
                                    for key in ("linearX", "linearY", "angularZ")])
@@ -166,11 +180,28 @@ class Go2Controller:
             self.estopped = False
             return True
         if kind == "policy":
+            if self.named_actions.active:
+                self.command_error = "named action owns motor control"
+                return False
             return self._policy_command(message)
+        if kind == "named_action":
+            operation = message.get("operation")
+            action_id = str(message.get("actionId", ""))
+            if operation == "start":
+                accepted, error = self.named_actions.start(str(message.get("name", "")), action_id)
+            elif operation == "cancel":
+                accepted, error = self.named_actions.cancel(action_id)
+            elif operation == "release":
+                accepted, error = self.named_actions.release(action_id)
+            else:
+                accepted, error = False, "named action operation must be start, cancel, or release"
+            self.command_error = error
+            return accepted
         if kind == "emergency_stop":
             self.twist[:] = 0
             self.last_twist_time = -math.inf
             self.estopped = True
+            self.named_actions.emergency_stop()
             return True
         if kind == "reset":
             self.reset()
@@ -319,6 +350,9 @@ class Go2Controller:
 
     def step(self) -> None:
         """Update gait/inference and apply only bounded motor torques each physics step."""
+        if self.named_actions.active:
+            self.named_actions.step()
+            return
         command = self.twist.copy() if (
             not self.estopped and self.clock() - self.last_twist_time <= COMMAND_WATCHDOG_S
         ) else np.zeros(3)
@@ -367,12 +401,27 @@ class Go2Controller:
                   - self.kd*self.data.qvel[self.dof] + self.feedforward)
         limits = self.model.actuator_ctrlrange[self.actuators]
         self.data.ctrl[self.actuators] = np.clip(torque, limits[:, 0], limits[:, 1])
+        self.named_actions.observe_idle()
 
     def state(self) -> dict:
         """Publish the bridge base format: world linear and body angular velocity."""
         q, v = self.base_qpos, self.base_dof
+        action_state = self.named_actions.status()
+        if self.named_actions.phase == "RUNNING":
+            controller_mode = "NAMED_ACTION"
+        elif self.named_actions.phase == "RECOVERING":
+            controller_mode = "ACTION_RECOVERY"
+        elif self.named_actions.phase == "HOLD":
+            controller_mode = "ACTION_HOLD"
+        elif self.session is not None:
+            controller_mode = "MOE_ROUGH"
+        else:
+            controller_mode = "BASE_GAIT"
         return {
             "timestamp": float(self.data.time), "externalControl": True, "estopped": self.estopped,
+            "controllerMode": controller_mode,
+            "availableActions": self.named_actions.available(),
+            "namedAction": action_state,
             "base": {
                 "position": self.data.qpos[q:q+3].tolist(),
                 "quaternion": self.data.qpos[q+3:q+7].tolist(),

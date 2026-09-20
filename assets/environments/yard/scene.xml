@@ -1,0 +1,44 @@
+<mujoco model="yard">
+  <statistic center="0 0 0.3" extent="9"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <visual>
+    <headlight ambient="0.25 0.25 0.25" diffuse="0.55 0.55 0.55" specular="0.08 0.08 0.08"/>
+    <rgba haze="0.75 0.82 0.88 1"/>
+    <global azimuth="135" elevation="-28"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.62 0.74 0.86" rgb2="0.96 0.97 0.94" width="512" height="3072"/>
+    <texture name="yard_ground" type="2d" builtin="checker" rgb1="0.22 0.31 0.24" rgb2="0.28 0.38 0.29" mark="edge" markrgb="0.45 0.55 0.44" width="256" height="256"/>
+    <material name="yard_ground" texture="yard_ground" texrepeat="16 16" texuniform="true" reflectance="0.02"/>
+    <material name="zone_green" rgba="0.16 0.58 0.36 0.45"/>
+    <material name="zone_blue" rgba="0.12 0.42 0.72 0.50"/>
+    <material name="obstacle" rgba="0.88 0.29 0.18 1"/>
+    <material name="concrete" rgba="0.56 0.58 0.58 1"/>
+  </asset>
+  <worldbody>
+    <light directional="true" pos="-3 -4 8" dir="0.25 0.3 -1" diffuse="0.72 0.70 0.65" specular="0.10 0.10 0.10"/>
+    <light directional="true" pos="5 4 5" dir="-0.4 -0.3 -1" diffuse="0.22 0.27 0.32" specular="0 0 0"/>
+    <geom name="yard_floor_visual" type="plane" size="12 8 0.05" group="1" contype="0" conaffinity="0" material="yard_ground"/>
+    <geom name="yard_floor_collision" type="plane" size="12 8 0.05" group="3" contype="1" conaffinity="1" friction="1.2 0.01 0.001" rgba="0 0 0 0.001"/>
+
+    <geom name="performance_zone" type="cylinder" pos="-4.5 0 0.004" size="1.5 0.004" group="1" contype="0" conaffinity="0" material="zone_green"/>
+    <geom name="handstand_corridor" type="box" pos="-3.75 0 0.003" size="1.75 1.0 0.003" group="1" contype="0" conaffinity="0" rgba="0.10 0.35 0.62 0.18"/>
+    <geom name="handstand_start_zone" type="box" pos="-4.6 0 0.006" size="0.6 0.5 0.006" group="1" contype="0" conaffinity="0" material="zone_blue"/>
+    <geom name="jump_zone" type="box" pos="3.2 0 0.005" size="0.4 0.45 0.005" group="1" contype="0" conaffinity="0" material="zone_blue"/>
+    <geom name="yard_jump_hurdle_visual" type="box" pos="5.0 0 0.04" size="0.025 0.65 0.04" group="1" contype="0" conaffinity="0" material="obstacle"/>
+    <geom name="yard_jump_hurdle_collision" type="box" pos="5.0 0 0.04" size="0.025 0.65 0.04" group="3" contype="1" conaffinity="1" friction="0.9 0.01 0.001" rgba="0 0 0 0.001"/>
+
+    <body name="yard_stairs" pos="5.4 3.0 0">
+      <geom type="box" pos="0.00 0 0.05" size="0.22 0.8 0.05" material="concrete"/>
+      <geom type="box" pos="0.44 0 0.10" size="0.22 0.8 0.10" material="concrete"/>
+      <geom type="box" pos="0.88 0 0.15" size="0.22 0.8 0.15" material="concrete"/>
+      <geom type="box" pos="1.32 0 0.20" size="0.22 0.8 0.20" material="concrete"/>
+    </body>
+    <body name="yard_ramp" pos="6 -3 0.22" euler="0 -0.17 0">
+      <geom type="box" size="1.4 0.8 0.05" material="concrete"/>
+    </body>
+    <geom type="cylinder" pos="0 -2.3 0.25" size="0.08 0.25" rgba="0.92 0.72 0.18 1"/>
+    <geom type="cylinder" pos="0.8 -2.3 0.25" size="0.08 0.25" rgba="0.92 0.72 0.18 1"/>
+    <geom type="cylinder" pos="1.6 -2.3 0.25" size="0.08 0.25" rgba="0.92 0.72 0.18 1"/>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "environmentId": "yard",
+  "preconditions": {
+    "minimumUprightCosine": 0.92,
+    "minimumBaseHeightM": 0.22,
+    "maximumBaseHeightM": 0.42,
+    "maximumLinearSpeedMps": 0.08,
+    "maximumAngularSpeedRadS": 0.15,
+    "maximumJointSpeedRadS": 0.35,
+    "requiredFootContacts": 4,
+    "settleTimeS": 0.4
+  },
+  "zones": {
+    "performance": {
+      "shape": "circle",
+      "center": [-4.5, 0.0],
+      "radius": 1.5
+    },
+    "jump_start": {
+      "shape": "box",
+      "minimum": [2.8, -0.45],
+      "maximum": [3.6, 0.45],
+      "headingRad": 0.0,
+      "headingToleranceRad": 0.25
+    },
+    "handstand_start": {
+      "shape": "box",
+      "minimum": [-5.2, -0.5],
+      "maximum": [-4.0, 0.5],
+      "headingRad": 0.0,
+      "headingToleranceRad": 0.25
+    },
+    "handstand_corridor": {
+      "shape": "box",
+      "minimum": [-5.5, -1.0],
+      "maximum": [-2.0, 1.0]
+    },
+    "jump_envelope": {
+      "shape": "box",
+      "minimum": [2.4, -0.8],
+      "maximum": [3.8, 0.8]
+    }
+  },
+  "actions": {
+    "crouch": {"zone": "performance", "durationS": 4.0},
+    "bow": {"zone": "performance", "durationS": 4.0},
+    "dance": {"zone": "performance", "durationS": 7.0},
+    "sway": {"zone": "performance", "durationS": 6.0},
+    "stretch": {"zone": "performance", "durationS": 6.0},
+    "backflip": {"zone": "performance", "durationS": 10.0, "asset": "backflip/policy.onnx"},
+    "handstand_walk": {
+      "zone": "handstand_start",
+      "executionZone": "handstand_corridor",
+      "durationS": 27.0,
+      "assets": ["quad2hand/go2_actor.onnx", "quad2hand/go2_estimator.onnx"]
+    },
+    "jump": {"zone": "jump_start", "executionZone": "jump_envelope", "durationS": 4.0}
+  },
+  "recovery": {
+    "blendTimeS": 1.0,
+    "settleTimeS": 0.8,
+    "timeoutS": 5.0,
+    "minimumUprightCosine": 0.82,
+    "minimumBaseHeightM": 0.18,
+    "maximumJointSpeedRadS": 1.2
+  }
+}

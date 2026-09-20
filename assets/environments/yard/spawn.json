@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "sceneId": "yard",
+  "position": [-4.5, 0.0],
+  "yaw": 0.0,
+  "robotRadiusMeters": 0.5,
+  "clearanceMeters": 1.5,
+  "method": "manually-verified-flat-action-zone"
+}

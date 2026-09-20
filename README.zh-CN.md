@@ -302,6 +302,59 @@ bash scripts/floor-transition.sh floor 1
 复制到其他场景。状态流程、标注字段、地图 ID、安全检查和人工验收见
 [双楼层换层 Demo](docs/MULTI_FLOOR_DEMO.zh-CN.md)。
 
+## Native 特技动作
+
+`named_action` skill 在 Native MuJoCo 内提供统一的特技控制模式。当前 scope 仅为
+`yard` 场景，支持蹲伏、鞠躬、舞动、摆动、伸展、跳跃、后空翻和倒立行走。启动时
+会按 `stunt-assets.lock.json` 下载并校验固定版本的公开 ONNX 权重：
+
+```bash
+bash sim/start.sh --backend native --viewer --environment yard
+bash scripts/named-action.sh --list
+bash scripts/named-action.sh bow
+bash scripts/named-action.sh backflip
+bash scripts/named-action.sh handstand_walk --timeout 45
+```
+
+动作只能在 `assets/environments/yard/named_actions.json` 人工标注的安全区内开始，
+并检查机身姿态、高度、速度、四足接触和稳定等待时间。动作期间基础步态、MoE、
+Nav2/Explore 的 `/cmd_vel` 与其他特技互斥；动作结束后先恢复站立并保持控制，随后由
+skill 使用同一个 action ID 释放到基础步态。特技不会修改 `qpos`、施加外力或更改
+重力。完整 scope、前置条件、生命周期、配置与扩展要求见
+[`skills/named_action/README.md`](skills/named_action/README.md)。
+
+### `rbnx chat` 指令示例
+
+导航目标可以使用 Mapping 的 `map` 坐标。下面示例适用于刚启动或刚重置的 `yard`
+在线地图，此时 `map -> odom` 为单位变换，所以这些 `map` 坐标与场景标注位置数值
+相同。可以直接把以下自然语言逐条输入 `rbnx chat`，Pilot 会负责先移动、等待机器人
+停稳，再调用对应的特技 skill。
+
+```text
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，然后蹲伏。
+
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，然后鞠躬。
+
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，然后跳舞。
+
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，然后左右摆动身体。
+
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，然后做伸展动作。
+
+运动到坐标 x=3.2、y=0.0、朝向 0 弧度，停稳后原地跳跃。
+
+运动到坐标 x=-4.5、y=0.0、朝向 0 弧度，停稳后做后空翻。
+
+运动到坐标 x=-4.6、y=0.0、朝向 0 弧度，停稳后沿正 X 方向倒立行走。
+```
+
+如果 Go2 已经位于对应安全区并且处于静止状态，也可以直接输入“鞠躬”、
+“做后空翻”或“倒立行走”等简短指令。需要注意，特技安全区仍按 MuJoCo
+world/`odom` 坐标人工标注；在线 `.live` 地图经过回环优化后，`map -> odom` 可能
+不再是单位变换。此时应使用地图界面中的实际 `map` 坐标，或者先按当前 TF 将安全区
+位置换算到 `map`，不能继续照搬上面的数值。加载固定地图进行定位时，`map` 坐标则
+保持稳定，更适合作为用户指令坐标。
+
 ## 验证
 
 离线测试：
@@ -373,6 +426,7 @@ Robonix。运行日志位于 `.runtime/` 和 `rbnx-boot/logs/`。
 | `primitives/` | 底盘、LiDAR、IMU 和 RGB-D provider |
 | `skills/explore/` | 前沿探索适配 |
 | `skills/floor_transition/` | 标定双层楼梯 skill |
+| `skills/named_action/` | Native 特技编排、互斥和恢复 skill |
 | `sim/native/` | native MuJoCo 运行时与策略推理 |
 | `sim/bridge/` | ROS 2 与 WebSocket bridge |
 | `src/` | Web MuJoCo 运行时、传感器和控制面板 |

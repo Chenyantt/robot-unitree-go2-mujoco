@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "path": "quad2hand/go2_actor.onnx",
+      "url": "https://raw.githubusercontent.com/Sang-SC/go2_quad2hand/bd410e4d91d3fabc1bedf1348fabe64542446e96/go2_deploy/pre_train/go2_actor.onnx",
+      "mirrors": ["https://ghproxy.net/https://raw.githubusercontent.com/Sang-SC/go2_quad2hand/bd410e4d91d3fabc1bedf1348fabe64542446e96/go2_deploy/pre_train/go2_actor.onnx"],
+      "sha256": "a517731107d65d34fbe73f5e72f5f4c9b8d9e6e3fb12b345e02a63d88973a6b3"
+    },
+    {
+      "path": "quad2hand/go2_estimator.onnx",
+      "url": "https://raw.githubusercontent.com/Sang-SC/go2_quad2hand/bd410e4d91d3fabc1bedf1348fabe64542446e96/go2_deploy/pre_train/go2_estimator.onnx",
+      "mirrors": ["https://ghproxy.net/https://raw.githubusercontent.com/Sang-SC/go2_quad2hand/bd410e4d91d3fabc1bedf1348fabe64542446e96/go2_deploy/pre_train/go2_estimator.onnx"],
+      "sha256": "05330692a0f4ddd324286ef02890b1a9d3ee583a25c02477ca00e201a89ef1db"
+    },
+    {
+      "path": "backflip/policy.onnx",
+      "url": "https://raw.githubusercontent.com/Robot-Nav/GO2_backflip/732ddac12eafc7191e66ca3364c5ace35a675349/model_6000_actor.onnx",
+      "mirrors": ["https://ghproxy.net/https://raw.githubusercontent.com/Robot-Nav/GO2_backflip/732ddac12eafc7191e66ca3364c5ace35a675349/model_6000_actor.onnx"],
+      "sha256": "01ed2b209cea10ad002aed462407cf864602326d52811a3ddd82da784cca1f32"
+    }
+  ]
+}

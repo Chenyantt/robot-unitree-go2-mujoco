@@ -15,5 +15,16 @@ The deployment-owned floor_transition skill uses MulanPSL-2.0 packaging
 scaffolding derived from syswonder/skill-explore-rbnx; its runtime controller,
 contracts, annotations and tests are specific to this repository.
 
+The Native named_action controller optionally uses pinned ONNX policies from
+Robot-Nav/GO2_backflip (MIT) and Sang-SC/go2_quad2hand (BSD-3-Clause). Exact
+commits, paths and SHA-256 digests are recorded in stunt-assets.lock.json;
+license texts are retained in third_party/. The deployment-owned action state
+machine, yard annotations, scripted poses, bridge integration and skill are
+covered by the repository's declared license expression.
+
+Earlier courtyard-action integration and reusable policy-adapter work was
+contributed by Origamii520 (Copyright 2026) under Apache-2.0 and informed this
+deployment-owned named_action architecture.
+
 Robonix services are separate upstream packages fetched by rbnx build;
 their licenses remain authoritative within their own source repositories.

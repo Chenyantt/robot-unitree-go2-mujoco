@@ -31,6 +31,9 @@ environment="$("$HOST_PYTHON" -c 'import json,sys; m=json.load(open("assets/envi
 export SIM_BACKEND="$backend" SIM_ENVIRONMENT="$environment" SIM_HEADLESS="$headless" SIM_DEV="$developer_mode" SIM_ROBOT=go2
 export MUJOCO_GL="${MUJOCO_GL:-glfw}"
 mkdir -p .runtime
+if [[ "$backend" == native && "$environment" == yard ]]; then
+  "$HOST_PYTHON" scripts/install-stunt-assets.py
+fi
 if [[ -f .runtime/sim.pid ]] && kill -0 "$(cat .runtime/sim.pid)" 2>/dev/null; then
   echo "Simulator is already running; stop it with bash sim/stop.sh" >&2
   exit 1

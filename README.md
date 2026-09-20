@@ -323,6 +323,70 @@ certification. Do not copy the existing coordinates to another environment.
 See the [multi-floor demo guide](docs/MULTI_FLOOR_DEMO.zh-CN.md) for the state
 sequence, annotations, map identities, safety checks, and manual acceptance.
 
+## Native Named Actions
+
+The `named_action` skill provides one unified stunt control mode in Native
+MuJoCo. Its current scope is limited to the `yard` environment and includes
+crouch, bow, dance, sway, stretch, jump, backflip, and handstand walking. At
+startup, the package downloads and verifies pinned public ONNX weights from
+`stunt-assets.lock.json`:
+
+```bash
+bash sim/start.sh --backend native --viewer --environment yard
+bash scripts/named-action.sh --list
+bash scripts/named-action.sh bow
+bash scripts/named-action.sh backflip
+bash scripts/named-action.sh handstand_walk --timeout 45
+```
+
+An action may start only inside a safety zone manually annotated in
+`assets/environments/yard/named_actions.json`. Admission checks body attitude,
+height, linear and angular velocity, leg-joint velocity, all-foot contact, and
+the configured settling time. While an action is active, it has exclusive
+control over the base: the fallback gait, MoE, Nav2/Explore `/cmd_vel`, and
+other named actions cannot drive the robot concurrently. After the stunt, the
+controller first recovers to a standing pose and retains ownership until the
+skill releases the same action ID back to the base gait. Named actions do not
+write `qpos`, apply external forces, or alter gravity. See
+[`skills/named_action/README.md`](skills/named_action/README.md) for the full
+scope, preconditions, lifecycle, configuration, and extension requirements.
+
+### `rbnx chat` Examples
+
+Navigation targets may use Mapping `map` coordinates. The examples below
+apply to a newly started or reset `yard` live map, where `map -> odom` is the
+identity transform and the numeric `map` coordinates match the annotated scene
+positions. Enter them one at a time in `rbnx chat`; Pilot navigates first,
+waits for the robot to settle, and then calls the corresponding named action.
+
+```text
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, then crouch.
+
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, then bow.
+
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, then dance.
+
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, then sway from side to side.
+
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, then stretch.
+
+Move to map coordinate x=3.2, y=0.0 with heading 0 radians, wait until settled, then jump in place.
+
+Move to map coordinate x=-4.5, y=0.0 with heading 0 radians, wait until settled, then do a backflip.
+
+Move to map coordinate x=-4.6, y=0.0 with heading 0 radians, wait until settled, then perform a handstand walk in the positive X direction.
+```
+
+When Go2 is already stationary inside the corresponding safety zone, short
+commands such as "bow," "do a backflip," or "perform a handstand walk" are also
+valid. Safety zones remain annotated in MuJoCo world/`odom` coordinates. After
+loop-closure optimization of the online `.live` map, `map -> odom` may no
+longer be the identity transform. In that case, use the actual `map`
+coordinates shown by the mapping interface or transform the annotated safety
+zone position with the current TF; do not reuse the example numbers blindly.
+A loaded fixed map provides stable `map` coordinates and is preferable for
+repeatable user commands.
+
 ## Validation
 
 Offline checks:
@@ -398,6 +462,7 @@ do not duplicate the Go2 primitives or policy controller per scene.
 | `primitives/` | Chassis, LiDAR, IMU and RGB-D providers |
 | `skills/explore/` | Frontier exploration adaptation |
 | `skills/floor_transition/` | Calibrated two-floor stair skill |
+| `skills/named_action/` | Native stunt orchestration, exclusion and recovery skill |
 | `sim/native/` | Native MuJoCo runtime and policy inference |
 | `sim/bridge/` | ROS 2 and WebSocket bridge |
 | `src/` | Web MuJoCo runtime, sensors and operator panel |

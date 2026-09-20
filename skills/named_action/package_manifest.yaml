@@ -1,0 +1,25 @@
+manifestVersion: 1
+
+package:
+  name: robonix.skill.named_action
+  version: 0.1.0
+  description: Exclusive profile-gated named actions for the native MuJoCo Go2.
+  tags: [skill, quadruped, simulation, named-action, stunt]
+  maintainers: [Chen Yanting <ytchen25@stu.pku.edu.cn>]
+  license: Apache-2.0 AND MIT AND BSD-3-Clause
+
+build: bash ../../scripts/build-primitive.sh skills/named_action
+start: bash ../../scripts/start-primitive.sh skills/named_action named_action_skill.named_action_skill named_action
+stop: bash ../../scripts/stop-primitive.sh named_action
+
+capabilities:
+  - name: robonix/skill/named_action/driver
+    path: capabilities/driver.v1.toml
+  - name: robonix/skill/named_action/execute
+    path: capabilities/execute.v1.toml
+  - name: robonix/skill/named_action/status
+    path: capabilities/status.v1.toml
+  - name: robonix/skill/named_action/cancel
+    path: capabilities/cancel.v1.toml
+  - name: robonix/skill/named_action/list
+    path: capabilities/list.v1.toml

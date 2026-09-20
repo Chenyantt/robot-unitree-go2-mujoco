@@ -104,6 +104,12 @@ service:
         scan: mid360_lidar
 
 skill:
+  - name: named_action
+    path: ./skills/named_action
+    config:
+      bridge_url: http://127.0.0.1:8766
+      poll_interval_s: 0.05
+      release_timeout_s: 10.0
   - name: explore
     path: ./skills/explore
     config:

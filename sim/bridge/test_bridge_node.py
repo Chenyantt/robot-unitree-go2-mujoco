@@ -8,6 +8,7 @@ import http.client
 import json
 import math
 import threading
+import time
 import unittest
 from contextlib import asynccontextmanager
 from http.server import ThreadingHTTPServer
@@ -16,6 +17,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import rclpy
 import websockets
+from geometry_msgs.msg import Twist
 
 from bridge_node import (
     BridgeState, CommandError, HealthHandler, MujocoRosBridge,
@@ -174,6 +176,22 @@ class RosBridgeTests(unittest.TestCase):
         self.node._on_map_cloud(cloud)
         self.node.map_cloud_pub.publish.assert_called_once_with(cloud)
 
+    def test_twist_is_suppressed_while_named_action_owns_control(self) -> None:
+        """Record competing motion but never forward it during action or recovery."""
+        self.node.send = Mock()
+        with self.state.lock:
+            self.state.latest_state = {"robot": {"controllerMode": "NAMED_ACTION"}}
+        message = Twist()
+        message.linear.x = .2
+        before = time.monotonic()
+        self.node._on_twist(message)
+        self.node.send.assert_not_called()
+        self.assertGreaterEqual(self.node.last_nonzero_twist, before)
+        with self.state.lock:
+            self.state.latest_state = {"robot": {"controllerMode": "BASE_GAIT"}}
+        self.node._on_twist(message)
+        self.node.send.assert_called_once()
+
 
 class ValidationTests(unittest.TestCase):
     """Reject malformed local commands before any runtime I/O."""
@@ -184,6 +202,10 @@ class ValidationTests(unittest.TestCase):
                    {"type": "policy", "action": "load", "id": "not_registered"},
                    {"type": "policy", "action": "load", "id": []},
                    {"type": "policy", "action": "toggle", "id": "moe_rough"},
+                   {"type": "named_action", "operation": "start", "name": "bow"},
+                   {"type": "named_action", "operation": "start", "name": "", "actionId": "x"},
+                   {"type": "named_action", "operation": "cancel", "name": "bow", "actionId": "x"},
+                   {"type": "named_action", "operation": "toggle", "actionId": "x"},
                    {"type": "reset", "unexpected": True}]
         invalid += [{"type": "cmd_vel", "linearX": value}
                     for value in (float("nan"), float("inf"), -float("inf"), True, "0.1", None, 0.601)]
@@ -195,12 +217,15 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(error.exception.status, 400)
 
     def test_valid_commands(self) -> None:
-        """All four authorized commands preserve their explicit fields."""
+        """Authorized commands preserve their explicit fields."""
         for command in (
             {"type": "reset"}, {"type": "emergency_stop", "sequence": 42},
             {"type": "cmd_vel", "linearX": 0.6, "linearY": -0.35, "angularZ": 0.6},
             {"type": "policy", "action": "load", "id": "moe_rough"},
             {"type": "policy", "action": "unload", "id": "moe_rough"},
+            {"type": "named_action", "operation": "start", "name": "bow", "actionId": "run-1"},
+            {"type": "named_action", "operation": "cancel", "actionId": "run-1"},
+            {"type": "named_action", "operation": "release", "actionId": "run-1"},
         ):
             self.assertEqual(validate_command(command), command)
 

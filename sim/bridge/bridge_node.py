@@ -43,6 +43,8 @@ LATCHED_QOS = QoSProfile(
 )
 VELOCITY_LIMITS = {"linearX": 0.6, "linearY": 0.35, "angularZ": 0.6}
 POLICY_IDS = frozenset({"moe_rough"})
+NAMED_ACTION_OPERATIONS = frozenset({"start", "cancel", "release"})
+COMMAND_QUIET_PERIOD_S = 0.5
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 RUNTIME_HELLO_TIMEOUT = 3.0
 RUNTIME_STATE_TIMEOUT = 3.0
@@ -83,6 +85,22 @@ def validate_command(payload: Any) -> dict[str, Any]:
         if payload.get("action") not in ("load", "unload"):
             raise CommandError(400, "policy action must be load or unload")
         command.update(id=payload["id"], action=payload["action"])
+    elif kind == "named_action":
+        fields.update(("operation", "name", "actionId"))
+        operation = payload.get("operation")
+        if operation not in NAMED_ACTION_OPERATIONS:
+            raise CommandError(400, "named action operation must be start, cancel, or release")
+        action_id = payload.get("actionId")
+        if not isinstance(action_id, str) or not 1 <= len(action_id) <= 128:
+            raise CommandError(400, "actionId must contain 1 to 128 characters")
+        command.update(operation=operation, actionId=action_id)
+        if operation == "start":
+            name = payload.get("name")
+            if not isinstance(name, str) or not 1 <= len(name) <= 64:
+                raise CommandError(400, "named action name must contain 1 to 64 characters")
+            command["name"] = name
+        elif "name" in payload:
+            raise CommandError(400, "name is only valid for named action start")
     elif kind not in ("emergency_stop", "reset"):
         raise CommandError(400, "unsupported command type")
     if payload.keys() - fields:
@@ -230,6 +248,9 @@ class BridgeState:
                 "lastFrameAgeSec": age,
                 "frames": dict(self.frames),
                 "policy": copy.deepcopy(self.policy),
+                "controllerMode": (self.latest_state.get("robot") or {}).get("controllerMode"),
+                "namedAction": copy.deepcopy((self.latest_state.get("robot") or {}).get("namedAction")),
+                "availableActions": list((self.latest_state.get("robot") or {}).get("availableActions") or []),
                 "lastCommandError": self.last_command_error,
             }
 
@@ -341,6 +362,8 @@ class MujocoRosBridge(Node):
         self.last_sim_time = 0.0
         self.pending: dict[int, tuple[Any, asyncio.Future]] = {}
         self.policy_sequence: int | None = None
+        self.exclusive_sequence: int | None = None
+        self.last_nonzero_twist = -math.inf
         self.command_timeout = float(os.environ.get("BRIDGE_COMMAND_TIMEOUT", "10"))
         if not math.isfinite(self.command_timeout) or not 0 < self.command_timeout <= 60:
             raise ValueError("BRIDGE_COMMAND_TIMEOUT must be finite and in (0, 60] seconds")
@@ -426,14 +449,21 @@ class MujocoRosBridge(Node):
         sequence = command.get("sequence", self.sequence + 1)
         if sequence <= self.sequence or sequence > 2**53 - 1:
             raise CommandError(409, f"sequence must be greater than {self.sequence}", sequence)
-        if command["type"] == "policy" and self.policy_sequence is not None:
-            raise CommandError(409, "a policy command is still awaiting runtime acknowledgement", sequence)
+        exclusive = command["type"] in ("policy", "named_action")
+        if exclusive and self.exclusive_sequence is not None:
+            raise CommandError(409, "an exclusive control command is awaiting runtime acknowledgement", sequence)
+        if command["type"] == "named_action" and command["operation"] in ("start", "release"):
+            if time.monotonic() - self.last_nonzero_twist < COMMAND_QUIET_PERIOD_S:
+                raise CommandError(409, "nonzero Twist input must remain quiet before named action start or release",
+                                   sequence)
         self.sequence = sequence
         command["sequence"] = sequence
         future = asyncio.get_running_loop().create_future()
         self.pending[sequence] = (owner, future)
         if command["type"] == "policy":
             self.policy_sequence = sequence
+        if exclusive:
+            self.exclusive_sequence = sequence
         try:
             deadline = asyncio.get_running_loop().time() + self.command_timeout
             await asyncio.wait_for(owner.send(json.dumps(command)), timeout=self.command_timeout)
@@ -453,11 +483,14 @@ class MujocoRosBridge(Node):
         except (websockets.exceptions.ConnectionClosed, OSError) as error:
             raise CommandError(503, "simulator runtime disconnected before acknowledgement", sequence) from error
         finally:
-            # A timed-out policy operation may still run; keep its fence until ack or disconnect.
-            if self.policy_sequence != sequence or future.done():
+            # A timed-out exclusive operation may still run; keep its fence
+            # until the late acknowledgement or a disconnect resolves ownership.
+            if self.exclusive_sequence != sequence or future.done():
                 self.pending.pop(sequence, None)
                 if self.policy_sequence == sequence:
                     self.policy_sequence = None
+                if self.exclusive_sequence == sequence:
+                    self.exclusive_sequence = None
             if not future.done():
                 future.cancel()
             elif not future.cancelled():
@@ -478,6 +511,8 @@ class MujocoRosBridge(Node):
         self.pending.pop(sequence, None)
         if self.policy_sequence == sequence:
             self.policy_sequence = None
+        if self.exclusive_sequence == sequence:
+            self.exclusive_sequence = None
         if isinstance(payload.get("policy"), dict):
             with self.shared_state.lock:
                 self.shared_state.policy = copy.deepcopy(payload["policy"])
@@ -491,11 +526,20 @@ class MujocoRosBridge(Node):
                 self.pending.pop(sequence, None)
                 if self.policy_sequence == sequence:
                     self.policy_sequence = None
+                if self.exclusive_sequence == sequence:
+                    self.exclusive_sequence = None
 
     def _on_twist(self, msg: Twist) -> None:
+        values = (msg.linear.x, msg.linear.y, msg.angular.z)
+        if any(abs(value) > 1e-6 for value in values):
+            self.last_nonzero_twist = time.monotonic()
+        with self.shared_state.lock:
+            mode = str((self.shared_state.latest_state.get("robot") or {}).get("controllerMode", ""))
+        if mode in ("NAMED_ACTION", "ACTION_RECOVERY", "ACTION_HOLD"):
+            return
         self.send({
-            "type": "cmd_vel", "linearX": msg.linear.x, "linearY": msg.linear.y,
-            "angularZ": msg.angular.z,
+            "type": "cmd_vel", "linearX": values[0], "linearY": values[1],
+            "angularZ": values[2],
         })
 
     def _on_reset(self, _msg: Empty) -> None:

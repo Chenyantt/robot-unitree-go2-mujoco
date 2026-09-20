@@ -12,6 +12,7 @@ for package_dir in \
   primitives/imu \
   primitives/front_camera \
   skills/explore \
+  skills/named_action \
   skills/floor_transition; do
   rbnx validate "$package_dir"
 done

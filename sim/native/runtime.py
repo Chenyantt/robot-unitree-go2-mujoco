@@ -65,8 +65,12 @@ class NativeRuntime:
         try:
             self.model = mujoco.MjModel.from_xml_path(str(self.scene_path))
             self.data = mujoco.MjData(self.model)
+            profile = self.environment.get("namedActionProfile")
+            profile_path = None if not profile else (root / profile).resolve()
             self.controller = Go2Controller(
-                self.model, self.data, root / "assets/robots/go2/policy/moe_rough")
+                self.model, self.data, root / "assets/robots/go2/policy/moe_rough",
+                action_profile=profile_path, environment_id=self.environment["id"],
+                action_assets=root / ".runtime/stunt-assets")
             self.sensors = NativeSensorSuite(self.model, self.data, self.robot["sensors"])
         except Exception:
             self.builder.cleanup(self.scene_path)
@@ -159,6 +163,9 @@ class NativeRuntime:
                 "type": "command_ack", "sequence": message.get("sequence"),
                 "accepted": bool(accepted),
                 "policy": dict(self.controller.policy_status),
+                "controllerMode": self.controller.state()["controllerMode"],
+                "namedAction": self.controller.named_actions.status(),
+                "detail": self.controller.command_error,
             }))
 
     def _keyboard(self) -> None:

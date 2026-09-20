@@ -1,0 +1,9 @@
+string run_id
+---
+bool known
+string state
+string action
+string phase
+float32 elapsed_s
+string detail
+string result_json

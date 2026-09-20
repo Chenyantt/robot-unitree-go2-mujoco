@@ -1,0 +1,11 @@
+Named action skill and Native integration are deployment-owned.
+
+Optional learned policies:
+- Robot-Nav/GO2_backflip at commit 732ddac12eafc7191e66ca3364c5ace35a675349,
+  MIT; see ../../third_party/backflip-LICENSE.
+- Sang-SC/go2_quad2hand at commit bd410e4d91d3fabc1bedf1348fabe64542446e96,
+  BSD-3-Clause; see ../../third_party/quad2hand-LICENSE.txt.
+
+The files are downloaded at runtime and accepted only when their SHA-256
+digests match ../../stunt-assets.lock.json. They are not included in the Git
+repository.

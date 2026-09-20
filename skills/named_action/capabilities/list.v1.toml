@@ -1,0 +1,11 @@
+[contract]
+id = "robonix/skill/named_action/list"
+version = "1"
+kind = "skill"
+idl = "named_action/srv/ListNamedActions.srv"
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = true

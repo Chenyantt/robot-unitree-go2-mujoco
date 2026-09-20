@@ -1,0 +1,11 @@
+[contract]
+id = "robonix/skill/named_action/cancel"
+version = "1"
+kind = "skill"
+idl = "named_action/srv/CancelNamedAction.srv"
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = true

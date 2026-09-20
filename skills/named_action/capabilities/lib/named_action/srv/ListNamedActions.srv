@@ -1,0 +1,4 @@
+---
+string[] names
+string environment
+string controller_mode

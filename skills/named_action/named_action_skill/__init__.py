@@ -1,0 +1,1 @@
+"""Robonix named action skill."""

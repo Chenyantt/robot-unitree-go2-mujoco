@@ -1,0 +1,1 @@
+"""Named action skill tests."""
